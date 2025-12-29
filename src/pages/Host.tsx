@@ -34,9 +34,6 @@ type VoteRow = {
   reason: string;
 };
 
-function isTrue(v: any) {
-  return v === true || String(v).toLowerCase() === "true" || String(v) === "1";
-}
 
 function phaseLabelHost(phase: string) {
   switch (phase) {

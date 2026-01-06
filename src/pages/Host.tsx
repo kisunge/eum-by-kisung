@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { callApi } from "../api";
 
-type PublicPlayer = { playerId: string; name: string; alive: any; roleRevealed: any; role?: string };
+type PublicPlayer = { playerId: string; name: string; alive: any; roleRevealed: any; role: string };
 type ProtectionResult = "none" | "success" | "partial";
 
 type PublicGame = {
@@ -15,7 +15,7 @@ type PublicGame = {
     protectionAttempted: boolean;
     protectionResult: ProtectionResult;
   };
-  players: PublicPlayer[]; // hostGetGame에서 role 포함되어 내려온다고 가정
+  players: PublicPlayer[];
 };
 
 type ActionRow = {
@@ -73,6 +73,7 @@ function protectionResultText(attempted: boolean, result: ProtectionResult) {
   if (!attempted) return "해당 없음";
   if (result === "success") return "성공";
   if (result === "partial") return "일부 성공";
+  // attempted=true & result=none => "실패"
   return "실패";
 }
 
@@ -89,7 +90,7 @@ export default function Host() {
   const [vote1Missing, setVote1Missing] = useState<string[]>([]);
   const [vote2Missing, setVote2Missing] = useState<string[]>([]);
 
-  // ✅ 진행자가 직접 입력하는 사냥/보호 상태
+  // 진행자가 직접 입력(사냥/보호)
   const [huntHunterId, setHuntHunterId] = useState("");
   const [huntTargetId, setHuntTargetId] = useState("");
   const [protectTargetId, setProtectTargetId] = useState("");
@@ -102,28 +103,19 @@ export default function Host() {
     return m;
   }, [game]);
 
-  // ✅ role 포함 데이터가 내려온다고 했으니, 여기서 왕/사냥꾼/대상 후보 구성
-  const king = useMemo(() => {
-    const ps = game?.players || [];
-    return ps.find((p) => String(p.role) === "king") || null;
-  }, [game]);
+  const king = useMemo(() => (game?.players || []).find((p) => p.role === "king") || null, [game]);
 
-  const hunters = useMemo(() => {
-    const ps = game?.players || [];
-    return ps.filter((p) => String(p.role) === "hunter" && isTrue(p.alive));
-  }, [game]);
+  const hunters = useMemo(
+    () => (game?.players || []).filter((p) => p.role === "hunter" && isTrue(p.alive)),
+    [game]
+  );
 
-  // 사냥 대상: 살아있는 사람 중 사냥꾼 제외(왕 포함)
-  const huntCandidates = useMemo(() => {
-    const ps = game?.players || [];
-    return ps.filter((p) => isTrue(p.alive) && String(p.role) !== "hunter");
-  }, [game]);
+  const huntCandidates = useMemo(
+    () => (game?.players || []).filter((p) => isTrue(p.alive) && p.role !== "hunter"),
+    [game]
+  );
 
-  // 보호 대상: 살아있는 전체(왕 자기 포함 가능)
-  const protectCandidates = useMemo(() => {
-    const ps = game?.players || [];
-    return ps.filter((p) => isTrue(p.alive));
-  }, [game]);
+  const protectCandidates = useMemo(() => (game?.players || []).filter((p) => isTrue(p.alive)), [game]);
 
   async function loadGame() {
     const data = await callApi<{ game: PublicGame }>({ action: "hostGetGame", hostPin: hostPin.trim() });
@@ -165,7 +157,6 @@ export default function Host() {
       vote2: VoteRow[];
       vote1Counts: Record<string, number>;
       vote2Counts: Record<string, number>;
-      vote1RevealedHunterId: string;
     }>({ action: "hostGetVotes", hostPin: hostPin.trim() });
 
     setVote1Missing(data.vote1Missing || []);
@@ -200,7 +191,7 @@ export default function Host() {
 
   async function revealAfterHikeEnd() {
     const data = await callApi<{
-      revealed: { killedPlayerIds: string[]; protectionAttempted: boolean; protectionResult: ProtectionResult };
+      revealed: { killedPlayerIds: string[]; killedExists: boolean; protectionAttempted: boolean; protectionResult: ProtectionResult };
     }>({
       action: "hostReveal",
       hostPin: hostPin.trim(),
@@ -231,37 +222,28 @@ export default function Host() {
     await loadGame();
   }
 
-  // ✅ NEW: 진행자가 직접 사냥/보호 기록하는 API 호출
   async function hostSetHunt() {
+    if (phase !== "hike") return alert("등산시작 단계에서만 기록할 수 있어요.");
     const h = huntHunterId.trim();
     const t = huntTargetId.trim();
     if (!h || !t) return alert("사냥꾼/대상을 선택하세요.");
 
     await callApi({ action: "hostSetHunt", hostPin: hostPin.trim(), hunterId: h, targetId: t });
-    alert("사냥 기록 저장 완료");
     setMsg(`사냥 기록 저장: ${nameById[h] || h} → ${nameById[t] || t}`);
-
-    // 입력값 리셋(선택)
     setHuntTargetId("");
-
-    // 조회 갱신
     await loadActions();
     await loadGame();
   }
 
   async function hostSetProtect() {
-    const k = king?.playerId || "";
+    if (phase !== "hike") return alert("등산시작 단계에서만 기록할 수 있어요.");
+    if (!king) return alert("왕이 없습니다.");
     const t = protectTargetId.trim();
-    if (!k) return alert("왕 정보가 없습니다.");
     if (!t) return alert("보호 대상을 선택하세요.");
 
-    await callApi({ action: "hostSetProtect", hostPin: hostPin.trim(), kingId: k, targetId: t });
-    alert("보호 기록 저장 완료");
-    setMsg(`보호 기록 저장: ${nameById[k] || k} → ${nameById[t] || t}`);
-
-    // 입력값 리셋(선택)
+    await callApi({ action: "hostSetProtect", hostPin: hostPin.trim(), kingId: king.playerId, targetId: t });
+    setMsg(`보호 기록 저장: ${king.name} → ${nameById[t] || t}`);
     setProtectTargetId("");
-
     await loadActions();
     await loadGame();
   }
@@ -293,6 +275,14 @@ export default function Host() {
         {game?.revealedHunterNames?.length ? (
           <div style={{ marginTop: 8 }}>
             발각된 사냥꾼(공개됨): <b>{game.revealedHunterNames.join(", ")}</b>
+          </div>
+        ) : null}
+
+        {game ? (
+          <div style={{ marginTop: 10, fontSize: 13, color: "#444", lineHeight: 1.6 }}>
+            <div>사망자(존재): <b>{game.revealed.killedExists ? "있음" : "없음"}</b></div>
+            <div>보호 시도: <b>{protectionAttemptText(game.revealed.protectionAttempted)}</b></div>
+            <div>보호 성공: <b>{protectionResultText(game.revealed.protectionAttempted, game.revealed.protectionResult)}</b></div>
           </div>
         ) : null}
       </section>
@@ -330,6 +320,7 @@ export default function Host() {
         <hr style={{ margin: "12px 0" }} />
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button onClick={() => setStatus("vote2Intro")}>2차투표 개시(설명)</button>
           <button onClick={() => setStatus("vote2")}>2차투표 열기(플레이어 투표)</button>
           <button onClick={loadVotes}>투표현황 조회</button>
           <button onClick={finalizeVote2}>2차투표 수동 완료처리</button>
@@ -350,7 +341,7 @@ export default function Host() {
         </div>
       </section>
 
-      {/* ✅ NEW 섹션: 등산시작 단계에서 진행자가 직접 사냥/보호 기록 */}
+      {/* 진행자가 카톡 확인 후 직접 사냥/보호 기록 */}
       <section style={{ border: "1px solid #ddd", padding: 12, marginBottom: 12 }}>
         <h2>진행자 카톡 확인 후 사냥/보호 기록</h2>
 
@@ -368,11 +359,9 @@ export default function Host() {
         ) : (
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
             <div style={{ border: "1px solid #eee", padding: 12, minWidth: 340 }}>
-              <div style={{ marginBottom: 8 }}>
-                <b>사냥 기록</b>
-              </div>
+              <b>사냥 기록</b>
 
-              <div style={{ marginBottom: 8 }}>
+              <div style={{ marginTop: 8 }}>
                 <div style={{ fontSize: 12, color: "#666" }}>사냥꾼 선택</div>
                 <select value={huntHunterId} onChange={(e) => setHuntHunterId(e.target.value)} style={{ width: "100%" }}>
                   <option value="">선택</option>
@@ -384,12 +373,12 @@ export default function Host() {
                 </select>
               </div>
 
-              <div style={{ marginBottom: 8 }}>
+              <div style={{ marginTop: 8 }}>
                 <div style={{ fontSize: 12, color: "#666" }}>사냥 대상(사냥꾼 제외, 왕 포함 가능)</div>
                 <select value={huntTargetId} onChange={(e) => setHuntTargetId(e.target.value)} style={{ width: "100%" }}>
                   <option value="">선택</option>
                   {huntCandidates
-                    .filter((p) => p.playerId !== huntHunterId) // 혹시 같은 id 선택 방지(추가 안전)
+                    .filter((p) => p.playerId !== huntHunterId)
                     .map((p) => (
                       <option key={p.playerId} value={p.playerId}>
                         {p.name}
@@ -398,25 +387,21 @@ export default function Host() {
                 </select>
               </div>
 
-              <button onClick={hostSetHunt} disabled={!huntHunterId || !huntTargetId}>
-                사냥 기록 저장
-              </button>
-
-              <div style={{ marginTop: 8, fontSize: 12, color: "#666", lineHeight: 1.5 }}>
-                * 플레이어는 선택/제출을 하지 않습니다. 카톡 사진 확인 후 진행자가 입력합니다.
+              <div style={{ marginTop: 10 }}>
+                <button onClick={hostSetHunt} disabled={!huntHunterId || !huntTargetId}>
+                  사냥 기록 저장
+                </button>
               </div>
             </div>
 
             <div style={{ border: "1px solid #eee", padding: 12, minWidth: 340 }}>
-              <div style={{ marginBottom: 8 }}>
-                <b>보호 기록</b>
-              </div>
+              <b>보호 기록</b>
 
-              <div style={{ marginBottom: 8, fontSize: 12, color: "#666" }}>
+              <div style={{ marginTop: 8, fontSize: 12, color: "#666" }}>
                 왕: <b>{king ? king.name : "없음"}</b>
               </div>
 
-              <div style={{ marginBottom: 8 }}>
+              <div style={{ marginTop: 8 }}>
                 <div style={{ fontSize: 12, color: "#666" }}>보호 대상(자기 포함 가능)</div>
                 <select
                   value={protectTargetId}
@@ -432,12 +417,10 @@ export default function Host() {
                 </select>
               </div>
 
-              <button onClick={hostSetProtect} disabled={!king || !protectTargetId}>
-                보호 기록 저장
-              </button>
-
-              <div style={{ marginTop: 8, fontSize: 12, color: "#666", lineHeight: 1.5 }}>
-                * 왕 본인도 보호 가능(사냥꾼이 왕을 사냥할 수 있으므로)
+              <div style={{ marginTop: 10 }}>
+                <button onClick={hostSetProtect} disabled={!king || !protectTargetId}>
+                  보호 기록 저장
+                </button>
               </div>
             </div>
           </div>

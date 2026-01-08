@@ -80,10 +80,10 @@ export default function Player() {
 
   // ✅ START 버튼 히트박스 좌표 (페피님이 조정)
   const START_BTN = {
-    left: "33%",   // ← 수정 포인트
-    top: "77%",    // ← 수정 포인트
-    width: "34%",  // ← 수정 포인트
-    height: "10%", // ← 수정 포인트
+    left: "23%",   // ← 수정 포인트
+    top: "75%",    // ← 수정 포인트
+    width: "60%",  // ← 수정 포인트
+    height: "20%", // ← 수정 포인트
   };
 
   async function login() {

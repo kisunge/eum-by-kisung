@@ -11,7 +11,7 @@ type PublicGame = {
   revealedHunterNames?: string[];
   revealed: {
     killedExists: boolean;
-    killedPlayerNames: string[]; // (GAS에서 이름으로 내려주는 버전)
+    killedPlayerNames: string[];
     protectionAttempted: boolean;
     protectionResult: ProtectionResult;
   };
@@ -56,6 +56,50 @@ function roleLabel(role: Me["role"]) {
   }
 }
 
+function aliveLabel(phase: string, alive: boolean) {
+  // 등산종료 이후부터만 공개
+  const canShow = phase === "hikeEnd" || phase.startsWith("vote") || phase.startsWith("ended");
+  if (!canShow) return "알 수 없음";
+  return alive ? "생존" : "사망";
+}
+
+function protectionAttemptText(attempted: boolean) {
+  return attempted ? "시도함" : "시도 안함";
+}
+
+function protectionResultText(attempted: boolean, result: ProtectionResult) {
+  if (!attempted) return "해당 없음";
+  if (result === "success") return "성공";
+  if (result === "partial") return "일부 성공";
+  return "실패";
+}
+
+function phaseSteps() {
+  return [
+    { key: "hike", label: "등산시작" },
+    { key: "vote1", label: "1차투표" },
+    { key: "vote2", label: "2차투표" },
+    { key: "ended", label: "최종결과" },
+  ];
+}
+
+function phaseIndex(phase: string) {
+  // intro 단계는 해당 투표 단계로 간주
+  if (phase === "vote1Intro") return 1;
+  if (phase === "vote2Intro") return 2;
+
+  if (phase === "hike") return 0;
+  if (phase.startsWith("vote1")) return 1;
+  if (phase.startsWith("vote2")) return 2;
+  if (phase.startsWith("ended")) return 3;
+
+  // lobby/hikeEnd는 0 근처로 처리
+  if (phase === "lobby") return -1;
+  if (phase === "hikeEnd") return 0;
+
+  return -1;
+}
+
 export default function Player() {
   type UiStage = "splash" | "login" | "game";
   const [uiStage, setUiStage] = useState<UiStage>("splash");
@@ -75,16 +119,21 @@ export default function Player() {
   const phase = game?.status || "lobby";
   const alive = useMemo(() => (me ? isTrue(me.alive) : false), [me]);
 
-  // ✅ GitHub Pages 하위 경로 대응 (BASE_URL)
   const splashUrl = `${import.meta.env.BASE_URL}ui/splash.png`;
 
   // ✅ START 버튼 히트박스 좌표 (페피님이 조정)
   const START_BTN = {
-    left: "23%",   // ← 수정 포인트
-    top: "75%",    // ← 수정 포인트
-    width: "60%",  // ← 수정 포인트
-    height: "20%", // ← 수정 포인트
+    left: "23%",
+    top: "75%",
+    width: "60%",
+    height: "20%",
   };
+
+  // ✅ 프로필 캐릭터 이미지 (p1~p7)
+  const myAvatarUrl = useMemo(() => {
+    if (!me) return "";
+    return `${import.meta.env.BASE_URL}avatars/${me.playerId}.png`; // 예: public/avatars/p1.png
+  }, [me]);
 
   async function login() {
     try {
@@ -119,7 +168,6 @@ export default function Player() {
     setGame(data.game);
   }
 
-  // token이 있으면 새로고침해도 바로 game으로
   useEffect(() => {
     if (!token) return;
     setUiStage("game");
@@ -168,30 +216,10 @@ export default function Player() {
   // ============================================================
   if (uiStage === "splash") {
     return (
-      <div
-        style={{
-          minHeight: "100vh",
-          background: "#000",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: 12,
-        }}
-      >
+      <div style={styles.fullBlackCenter}>
         <div style={{ position: "relative", width: "min(980px, 100%)" }}>
-          <img
-            src={splashUrl}
-            alt="splash"
-            style={{
-              width: "100%",
-              height: "auto",
-              display: "block",
-              borderRadius: 14,
-              boxShadow: "0 16px 40px rgba(0,0,0,0.45)",
-            }}
-          />
+          <img src={splashUrl} alt="splash" style={styles.splashImg} />
 
-          {/* START 버튼 히트박스 */}
           <button
             onClick={() => setUiStage("login")}
             aria-label="START"
@@ -212,141 +240,56 @@ export default function Player() {
   }
 
   // ============================================================
-  // LOGIN POPUP (UI 디자인) + 뒤 배경 흐림
+  // LOGIN POPUP
   // ============================================================
   if (uiStage === "login") {
     return (
-      <div
-        style={{
-          minHeight: "100vh",
-          background: "#000",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: 12,
-        }}
-      >
+      <div style={styles.fullBlackCenter}>
         <div style={{ position: "relative", width: "min(980px, 100%)" }}>
-          {/* 배경 이미지 */}
           <img
             src={splashUrl}
             alt="splash"
             style={{
-              width: "100%",
-              height: "auto",
-              display: "block",
-              borderRadius: 14,
-              boxShadow: "0 16px 40px rgba(0,0,0,0.45)",
-              filter: "blur(3px) brightness(0.85)", // ✅ 흐림 + 살짝 어둡게
+              ...styles.splashImg,
+              filter: "blur(3px) brightness(0.85)",
             }}
           />
+          <div style={styles.dimOverlay} />
 
-          {/* 딤 오버레이 */}
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              borderRadius: 14,
-              background: "rgba(0,0,0,0.35)",
-            }}
-          />
-
-          {/* 로그인 UI 팝업 */}
-          <div
-            style={{
-              position: "absolute",
-              left: "50%",
-              top: "50%",
-              transform: "translate(-50%, -50%)",
-              width: "min(420px, 88%)",
-              borderRadius: 18,
-              background: "rgba(18,18,18,0.92)",
-              border: "1px solid rgba(255,255,255,0.18)",
-              boxShadow: "0 18px 60px rgba(0,0,0,0.55)",
-              padding: 16,
-              color: "#fff",
-            }}
-          >
+          <div style={styles.loginModal}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <div style={{ fontWeight: 900, fontSize: 18 }}>Login</div>
-              <button
-                onClick={() => setUiStage("splash")}
-                aria-label="Close"
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  color: "#fff",
-                  fontSize: 20,
-                  cursor: "pointer",
-                }}
-              >
+              <button onClick={() => setUiStage("splash")} aria-label="Close" style={styles.xBtn}>
                 ×
               </button>
             </div>
 
             <div style={{ marginTop: 12 }}>
-              <label style={{ display: "block", fontSize: 12, color: "rgba(255,255,255,0.8)" }}>
-                Login ID
-              </label>
+              <label style={styles.label}>Login ID</label>
               <input
                 value={loginId}
                 onChange={(e) => setLoginId(e.target.value)}
                 placeholder="Enter your ID"
-                style={{
-                  width: "100%",
-                  marginTop: 6,
-                  padding: "12px 12px",
-                  borderRadius: 12,
-                  border: "1px solid rgba(255,255,255,0.2)",
-                  background: "rgba(0,0,0,0.25)",
-                  color: "#fff",
-                  outline: "none",
-                }}
+                style={styles.input}
               />
             </div>
 
             <div style={{ marginTop: 12 }}>
-              <label style={{ display: "block", fontSize: 12, color: "rgba(255,255,255,0.8)" }}>
-                Password
-              </label>
+              <label style={styles.label}>Password</label>
               <input
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 type="password"
                 placeholder="Enter your password"
-                style={{
-                  width: "100%",
-                  marginTop: 6,
-                  padding: "12px 12px",
-                  borderRadius: 12,
-                  border: "1px solid rgba(255,255,255,0.2)",
-                  background: "rgba(0,0,0,0.25)",
-                  color: "#fff",
-                  outline: "none",
-                }}
+                style={styles.input}
               />
             </div>
 
-            <button
-              onClick={login}
-              disabled={!loginId.trim() || !password}
-              style={{
-                width: "100%",
-                marginTop: 14,
-                padding: "12px 12px",
-                borderRadius: 12,
-                border: "1px solid rgba(255,255,255,0.18)",
-                background: "rgba(255,200,60,0.95)",
-                fontWeight: 900,
-                cursor: "pointer",
-              }}
-            >
+            <button onClick={login} disabled={!loginId.trim() || !password} style={styles.loginBtn}>
               LOGIN
             </button>
 
-            {msg ? (
-              <div style={{ marginTop: 10, fontSize: 13, color: "rgba(255,255,255,0.92)" }}>{msg}</div>
-            ) : null}
+            {msg ? <div style={{ marginTop: 10, fontSize: 13, opacity: 0.92 }}>{msg}</div> : null}
           </div>
         </div>
       </div>
@@ -354,69 +297,168 @@ export default function Player() {
   }
 
   // ============================================================
-  // GAME UI (기존 화면)
+  // GAME UI (새 UI)
   // ============================================================
+  const stepIdx = phaseIndex(phase);
+  const showVote1 = alive && phase === "vote1";
+  const showVote2 = alive && phase === "vote2";
+  const showVoteIntro = phase === "vote1Intro" || phase === "vote2Intro";
+
+  // 행동 정보는 지금은 "섹션만" 만들고, 나중에 요청하신 방식(카톡 안내 + host가 처리)로 연결할 예정
+  const showActionInfo = me?.role === "hunter" || me?.role === "king";
+
   return (
-    <div style={{ padding: 16, maxWidth: 980, margin: "0 auto" }}>
-      <h1>플레이어</h1>
+    <div style={styles.page}>
+      <div style={styles.container}>
+        {/* 1) 프로필 영역 */}
+        <section style={styles.card}>
+          <div style={styles.cardTitle}>프로필</div>
 
-      {!me || !game ? (
-        <div style={{ color: "#555" }}>게임 정보를 불러오는 중...</div>
-      ) : (
-        <>
-          <section style={{ border: "1px solid #ddd", padding: 12, marginBottom: 12, borderRadius: 12 }}>
-            <div>
-              단계: <b>{phaseLabelPlayer(phase)}</b>
-              {game.endedWinner ? <span> / 승자: {game.endedWinner}</span> : null}
+          <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
+            <div style={styles.avatarWrap}>
+              {myAvatarUrl ? (
+                <img
+                  src={myAvatarUrl}
+                  alt="avatar"
+                  style={{ width: "100%", height: "100%", imageRendering: "pixelated" as any }}
+                />
+              ) : (
+                <div style={{ color: "#999" }}>-</div>
+              )}
             </div>
 
-            <div style={{ marginTop: 8 }}>
-              내 이름: <b>{me.name}</b>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 20, fontWeight: 900 }}>{me?.name || "-"}</div>
+              <div style={{ marginTop: 6, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <Badge label={`역할: ${me ? roleLabel(me.role) : "-"}`} />
+                <Badge label={`생존: ${aliveLabel(phase, alive)}`} />
+              </div>
+
+              {/* 왕/사냥꾼 정보(선택) */}
+              {me?.role === "king" && me.knownHunter ? (
+                <div style={{ marginTop: 10, fontSize: 13, color: "#444" }}>
+                  내가 아는 사냥꾼 1명: <b>{me.knownHunter.name}</b>
+                </div>
+              ) : null}
+              {me?.role === "hunter" && me.otherHunter ? (
+                <div style={{ marginTop: 10, fontSize: 13, color: "#444" }}>
+                  다른 사냥꾼: <b>{me.otherHunter.name}</b>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </section>
+
+        {/* 2) 게임 단계 + 규칙 */}
+        <section style={styles.card}>
+          <div style={styles.cardTitle}>게임 단계</div>
+
+          <div style={{ marginTop: 10 }}>
+            <div style={{ fontSize: 14, color: "#555" }}>
+              현재 단계: <b style={{ color: "#111" }}>{phaseLabelPlayer(phase)}</b>
+              {game?.endedWinner ? <span> / 승자: {game.endedWinner}</span> : null}
             </div>
 
-            <div style={{ marginTop: 8 }}>
-              생존:{" "}
-              <b>
-                {phase === "hikeEnd" || phase.startsWith("vote") || phase.startsWith("ended")
-                  ? (alive ? "생존" : "사망")
-                  : "알 수 없음"}
-              </b>
+            <div style={{ marginTop: 12 }}>
+              <StepBar currentIndex={stepIdx} />
             </div>
+          </div>
 
-            <div style={{ marginTop: 8 }}>
-              내 역할: <b>{roleLabel(me.role)}</b>
+          <div style={{ marginTop: 14 }}>
+            <details open>
+              <summary style={{ cursor: "pointer", fontWeight: 900 }}>규칙 설명</summary>
+              <ol style={{ marginTop: 10, lineHeight: 1.7, color: "#333" }}>
+                <li>7인의 동물 중에는 사냥꾼 2명과 동물의 왕 1명이 숨어 있습니다.</li>
+                <li>사냥꾼은 등산을 하는 도중 비밀리에 동물을 사냥을 할 수 있습니다.</li>
+                <li>동물의 왕은 사냥꾼의 사냥으로부터 보호할 수 있는 동물을 보호(본인포함) 할 수 있습니다.</li>
+                <li>사냥 방법과 보호 방법은 본인만이 알고 있습니다.</li>
+                <li>동물의 왕은 사냥꾼 중 1명이 누구인지 알고 있습니다.</li>
+                <li>
+                  등산이 끝나고 나면 두 차례의 투표를 통해 사냥꾼을 색출합니다. 이때 사냥을 당하여 죽은 동물은 투표에
+                  참여할 수 없습니다.
+                </li>
+                <li>
+                  만약 동물들이 사냥꾼 2명 모두를 정확히 밝혀내면 동물들의 승리. 단, 사냥꾼 2명 모두 들키더라도 마지막에
+                  사냥꾼이 왕의 정체를 맞추는 경우에는 사냥꾼의 최종 승리로 끝.
+                </li>
+              </ol>
+            </details>
+          </div>
+        </section>
+
+        {/* 3) 게임 진행 정보 */}
+        <section style={styles.card}>
+          <div style={styles.cardTitle}>게임 진행 정보</div>
+
+          <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr", gap: 10 }}>
+            <InfoRow
+              label="사망자"
+              value={
+                phase === "hikeEnd" || phase.startsWith("vote") || phase.startsWith("ended")
+                  ? (game?.revealed.killedPlayerNames.length ? "있음" : "없음")
+                  : (game?.revealed.killedExists ? "있음" : "없음")
+              }
+            />
+            <InfoRow
+              label="사망자 목록"
+              value={
+                phase === "hikeEnd" || phase.startsWith("vote") || phase.startsWith("ended")
+                  ? (game?.revealed.killedPlayerNames.join(", ") || "-")
+                  : "-"
+              }
+            />
+            <InfoRow
+              label="보호 시도"
+              value={protectionAttemptText(!!game?.revealed.protectionAttempted)}
+            />
+            <InfoRow
+              label="보호 성공"
+              value={protectionResultText(!!game?.revealed.protectionAttempted, game?.revealed.protectionResult || "none")}
+            />
+          </div>
+        </section>
+
+        {/* 4) 행동 정보 (사냥꾼/왕만 노출) */}
+        {showActionInfo && (
+          <section style={styles.card}>
+            <div style={styles.cardTitle}>행동 정보</div>
+
+            <div style={{ marginTop: 10, color: "#333", lineHeight: 1.7 }}>
+              {me?.role === "hunter" ? (
+                <>
+                  <div style={{ fontWeight: 900 }}>사냥꾼 안내</div>
+                  <div style={{ marginTop: 6 }}>
+                    등산 중, <b>사냥할 동물의 신발 사진</b>을 찍어서 진행자에게 카톡으로 보내세요.
+                  </div>
+                </>
+              ) : null}
+
+              {me?.role === "king" ? (
+                <>
+                  <div style={{ fontWeight: 900 }}>동물의 왕 안내</div>
+                  <div style={{ marginTop: 6 }}>
+                    등산 중, <b>보호할 동물의 손 사진</b>을 찍어서 진행자에게 카톡으로 보내세요. (본인 포함 가능)
+                  </div>
+                </>
+              ) : null}
             </div>
           </section>
+        )}
 
-          <section style={{ border: "1px solid #ddd", padding: 12, marginBottom: 12, borderRadius: 12 }}>
-            <h2>공개 정보</h2>
-            <div>
-              사망자:{" "}
-              {phase === "hikeEnd" || phase.startsWith("vote") || phase.startsWith("ended")
-                ? (game.revealed.killedPlayerNames.join(", ") || "없음")
-                : (game.revealed.killedExists ? "있음" : "없음")}
-            </div>
-            <div>보호 시도: {game.revealed.protectionAttempted ? "시도함" : "시도 안함"}</div>
-            <div>
-              보호 성공:{" "}
-              {!game.revealed.protectionAttempted
-                ? "해당 없음"
-                : game.revealed.protectionResult === "success"
-                ? "성공"
-                : game.revealed.protectionResult === "partial"
-                ? "일부 성공"
-                : "실패"}
-            </div>
-          </section>
+        {/* 투표 섹션 (기존 기능 유지) */}
+        <section style={styles.card}>
+          <div style={styles.cardTitle}>투표</div>
 
-          <section style={{ border: "1px solid #ddd", padding: 12, marginBottom: 12, borderRadius: 12 }}>
-            <h2>투표</h2>
+          <div style={{ marginTop: 10 }}>
+            {!alive && (phase === "hikeEnd" || phase.startsWith("vote") || phase.startsWith("ended")) ? (
+              <div style={{ color: "#555" }}>사망자는 투표할 수 없어요.</div>
+            ) : null}
 
-            {!alive && (phase === "hikeEnd" || phase.startsWith("vote") || phase.startsWith("ended")) && (
-              <div>사망자는 투표할 수 없어요.</div>
-            )}
+            {showVoteIntro ? (
+              <div style={{ color: "#555" }}>진행자가 투표 설명 중입니다. 잠시만 기다려주세요.</div>
+            ) : null}
 
-            {alive && phase === "vote1" && (
+            {showVote1 ? (
               <VoteBox
                 title="1차 투표 (사유 필수)"
                 candidates={candidatesVote1}
@@ -426,9 +468,9 @@ export default function Player() {
                 setReason={setVoteReason}
                 onSubmit={() => submitVote(1)}
               />
-            )}
+            ) : null}
 
-            {alive && phase === "vote2" && (
+            {showVote2 ? (
               <VoteBox
                 title="2차 투표 (사유 필수)"
                 candidates={candidatesVote2}
@@ -438,17 +480,15 @@ export default function Player() {
                 setReason={setVoteReason}
                 onSubmit={() => submitVote(2)}
               />
-            )}
+            ) : null}
 
-            {(phase === "vote1Intro" || phase === "vote2Intro") && (
-              <div style={{ color: "#555" }}>진행자가 투표 설명 중입니다. 잠시만 기다려주세요.</div>
-            )}
-
-            {(phase === "lobby" || phase === "hike" || phase === "hikeEnd") && (
+            {!showVoteIntro && !showVote1 && !showVote2 ? (
               <div style={{ color: "#555" }}>현재 투표 단계가 아닙니다.</div>
-            )}
-          </section>
+            ) : null}
+          </div>
+        </section>
 
+        <div style={{ display: "flex", gap: 10, justifyContent: "space-between", alignItems: "center" }}>
           <button
             onClick={() => {
               localStorage.removeItem("token");
@@ -458,11 +498,97 @@ export default function Player() {
               setMsg("");
               setUiStage("splash");
             }}
+            style={styles.secondaryBtn}
           >
             로그아웃
           </button>
-        </>
-      )}
+
+          <button onClick={() => refresh().catch(() => {})} style={styles.secondaryBtn}>
+            새로고침
+          </button>
+        </div>
+
+        <div style={{ height: 20 }} />
+      </div>
+    </div>
+  );
+}
+
+function Badge(props: { label: string }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "7px 10px",
+        borderRadius: 999,
+        border: "1px solid rgba(0,0,0,0.10)",
+        background: "rgba(255,255,255,0.75)",
+        fontSize: 12,
+        fontWeight: 800,
+        color: "#222",
+      }}
+    >
+      {props.label}
+    </span>
+  );
+}
+
+function InfoRow(props: { label: string; value: string }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        gap: 10,
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: "10px 12px",
+        borderRadius: 12,
+        border: "1px solid rgba(0,0,0,0.08)",
+        background: "rgba(255,255,255,0.65)",
+      }}
+    >
+      <div style={{ fontWeight: 900, color: "#333" }}>{props.label}</div>
+      <div style={{ color: "#111" }}>{props.value}</div>
+    </div>
+  );
+}
+
+function StepBar(props: { currentIndex: number }) {
+  const steps = phaseSteps();
+  const cur = props.currentIndex;
+
+  return (
+    <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+      {steps.map((s, idx) => {
+        const active = cur >= idx && cur !== -1;
+        const done = cur > idx;
+
+        return (
+          <div key={s.key} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div
+              style={{
+                minWidth: 92,
+                padding: "10px 12px",
+                borderRadius: 14,
+                border: "1px solid rgba(0,0,0,0.10)",
+                background: active ? "rgba(255,220,120,0.85)" : "rgba(255,255,255,0.60)",
+                fontWeight: 900,
+                fontSize: 13,
+                color: "#222",
+                textAlign: "center",
+              }}
+            >
+              {s.label}
+              {done ? <span style={{ marginLeft: 6, fontWeight: 900 }}>✓</span> : null}
+            </div>
+
+            {idx !== steps.length - 1 ? (
+              <div style={{ width: 18, height: 2, background: "rgba(0,0,0,0.18)" }} />
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -478,13 +604,11 @@ function VoteBox(props: {
 }) {
   const canSubmit = props.target.trim() && props.reason.trim();
   return (
-    <div style={{ border: "1px solid #eee", padding: 12, marginBottom: 12, borderRadius: 12 }}>
-      <div style={{ marginBottom: 8 }}>
-        <b>{props.title}</b>
-      </div>
+    <div style={{ border: "1px solid rgba(0,0,0,0.10)", padding: 12, borderRadius: 12, background: "rgba(255,255,255,0.65)" }}>
+      <div style={{ marginBottom: 10, fontWeight: 900 }}>{props.title}</div>
 
-      <div style={{ marginBottom: 8 }}>
-        <select value={props.target} onChange={(e) => props.setTarget(e.target.value)}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10 }}>
+        <select value={props.target} onChange={(e) => props.setTarget(e.target.value)} style={styles.select}>
           <option value="">대상 선택</option>
           {props.candidates.map((p) => (
             <option key={p.playerId} value={p.playerId}>
@@ -492,24 +616,161 @@ function VoteBox(props: {
             </option>
           ))}
         </select>
-      </div>
 
-      <div style={{ marginBottom: 8 }}>
         <textarea
           placeholder="투표 사유(필수)"
           value={props.reason}
           onChange={(e) => props.setReason(e.target.value)}
           rows={4}
-          style={{ width: "100%" }}
+          style={styles.textarea}
         />
-      </div>
 
-      <button onClick={props.onSubmit} disabled={!canSubmit}>
-        제출
-      </button>
-      {!props.reason.trim() && (
-        <div style={{ fontSize: 12, color: "#666", marginTop: 6 }}>사유를 입력해야 제출할 수 있어요.</div>
-      )}
+        <button onClick={props.onSubmit} disabled={!canSubmit} style={{ ...styles.primaryBtn, opacity: canSubmit ? 1 : 0.55 }}>
+          제출
+        </button>
+
+        {!props.reason.trim() ? (
+          <div style={{ fontSize: 12, color: "#666" }}>사유를 입력해야 제출할 수 있어요.</div>
+        ) : null}
+      </div>
     </div>
   );
 }
+
+const styles: Record<string, any> = {
+  fullBlackCenter: {
+    minHeight: "100vh",
+    background: "#000",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 12,
+  },
+  splashImg: {
+    width: "100%",
+    height: "auto",
+    display: "block",
+    borderRadius: 14,
+    boxShadow: "0 16px 40px rgba(0,0,0,0.45)",
+  },
+  dimOverlay: {
+    position: "absolute",
+    inset: 0,
+    borderRadius: 14,
+    background: "rgba(0,0,0,0.35)",
+  },
+  loginModal: {
+    position: "absolute",
+    left: "50%",
+    top: "50%",
+    transform: "translate(-50%, -50%)",
+    width: "min(420px, 88%)",
+    borderRadius: 18,
+    background: "rgba(18,18,18,0.92)",
+    border: "1px solid rgba(255,255,255,0.18)",
+    boxShadow: "0 18px 60px rgba(0,0,0,0.55)",
+    padding: 16,
+    color: "#fff",
+  },
+  xBtn: {
+    background: "transparent",
+    border: "none",
+    color: "#fff",
+    fontSize: 20,
+    cursor: "pointer",
+  },
+  label: {
+    display: "block",
+    fontSize: 12,
+    color: "rgba(255,255,255,0.8)",
+  },
+  input: {
+    width: "100%",
+    marginTop: 6,
+    padding: "12px 12px",
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,0.2)",
+    background: "rgba(0,0,0,0.25)",
+    color: "#fff",
+    outline: "none",
+  },
+  loginBtn: {
+    width: "100%",
+    marginTop: 14,
+    padding: "12px 12px",
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,0.18)",
+    background: "rgba(255,200,60,0.95)",
+    fontWeight: 900,
+    cursor: "pointer",
+  },
+
+  page: {
+    minHeight: "100vh",
+    background: "linear-gradient(180deg, rgba(255,245,215,1) 0%, rgba(255,255,255,1) 55%, rgba(245,250,255,1) 100%)",
+    padding: "16px 12px",
+  },
+  container: {
+    maxWidth: 980,
+    margin: "0 auto",
+    display: "grid",
+    gap: 12,
+  },
+  card: {
+    border: "1px solid rgba(0,0,0,0.10)",
+    borderRadius: 16,
+    background: "rgba(255,255,255,0.72)",
+    boxShadow: "0 10px 26px rgba(0,0,0,0.06)",
+    padding: 14,
+  },
+  cardTitle: {
+    fontSize: 16,
+    fontWeight: 900,
+    color: "#222",
+  },
+  avatarWrap: {
+    width: 88,
+    height: 88,
+    borderRadius: 18,
+    border: "1px solid rgba(0,0,0,0.10)",
+    background: "rgba(255,255,255,0.85)",
+    overflow: "hidden",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  primaryBtn: {
+    padding: "12px 12px",
+    borderRadius: 12,
+    border: "1px solid rgba(0,0,0,0.12)",
+    background: "rgba(255,200,60,0.95)",
+    fontWeight: 900,
+    cursor: "pointer",
+  },
+  secondaryBtn: {
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: "1px solid rgba(0,0,0,0.10)",
+    background: "rgba(255,255,255,0.85)",
+    fontWeight: 900,
+    cursor: "pointer",
+  },
+  select: {
+    width: "100%",
+    padding: "12px 12px",
+    borderRadius: 12,
+    border: "1px solid rgba(0,0,0,0.12)",
+    background: "rgba(255,255,255,0.95)",
+    outline: "none",
+    fontWeight: 700,
+  },
+  textarea: {
+    width: "100%",
+    padding: "12px 12px",
+    borderRadius: 12,
+    border: "1px solid rgba(0,0,0,0.12)",
+    background: "rgba(255,255,255,0.95)",
+    outline: "none",
+    fontWeight: 600,
+  },
+};

@@ -16,8 +16,7 @@ type PublicGame = {
   endedWinner: string;
   vote1RevealedHunterId: string;
   revealedHunterNames?: string[];
-  // ✅ 방어: 서버가 어떤 시점에 revealed를 안 내려줘도 프론트가 안 터지게 optional 처리
-  revealed?: Revealed;
+  revealed?: Partial<Revealed>; // ✅ 부분만 올 수도 있으니 Partial로
   players: PublicPlayer[];
 };
 
@@ -52,7 +51,6 @@ function phaseLabelPlayer(phase: string) {
     case "vote2":
       return "2차투표(진행)";
     case "endedHunters":
-      return "최종결과 확인";
     case "endedAnimals":
       return "최종결과 확인";
     default:
@@ -317,12 +315,16 @@ export default function Player() {
   // GAME UI
   // ============================================================
 
-  // ✅ 핵심 방어: revealed가 undefined여도 절대 터지지 않게 기본값 부여
-  const revealed: Revealed = game?.revealed ?? {
-    killedExists: false,
-    killedPlayerNames: [],
-    protectionAttempted: false,
-    protectionResult: "none",
+  // ✅ 핵심: revealed가 "있는데 일부 필드가 없는 경우"까지 전부 방어
+  const revealedRaw = game?.revealed ?? {};
+  const revealed: Revealed = {
+    killedExists: !!revealedRaw.killedExists,
+    killedPlayerNames: Array.isArray(revealedRaw.killedPlayerNames) ? revealedRaw.killedPlayerNames : [],
+    protectionAttempted: !!revealedRaw.protectionAttempted,
+    protectionResult:
+      revealedRaw.protectionResult === "success" || revealedRaw.protectionResult === "partial" || revealedRaw.protectionResult === "none"
+        ? revealedRaw.protectionResult
+        : "none",
   };
 
   const stepIdx = phaseIndex(phase);
@@ -334,7 +336,6 @@ export default function Player() {
   return (
     <div style={styles.page}>
       <div style={styles.container}>
-        {/* 1) 프로필 영역 */}
         <section style={styles.card}>
           <div style={styles.cardTitle}>프로필</div>
 
@@ -373,7 +374,6 @@ export default function Player() {
           </div>
         </section>
 
-        {/* 2) 게임 단계 + 규칙 */}
         <section style={styles.card}>
           <div style={styles.cardTitle}>게임 단계</div>
 
@@ -410,7 +410,6 @@ export default function Player() {
           </div>
         </section>
 
-        {/* 3) 게임 진행 정보 */}
         <section style={styles.card}>
           <div style={styles.cardTitle}>게임 진행 정보</div>
 
@@ -440,7 +439,6 @@ export default function Player() {
           </div>
         </section>
 
-        {/* 4) 행동 정보 */}
         {showActionInfo && (
           <section style={styles.card}>
             <div style={styles.cardTitle}>행동 정보</div>
@@ -467,7 +465,6 @@ export default function Player() {
           </section>
         )}
 
-        {/* 투표 섹션 */}
         <section style={styles.card}>
           <div style={styles.cardTitle}>투표</div>
 

@@ -4,17 +4,20 @@ import { callApi } from "../api";
 type PublicPlayer = { playerId: string; name: string; alive: any; roleRevealed: any };
 type ProtectionResult = "none" | "success" | "partial";
 
+type Revealed = {
+  killedExists: boolean;
+  killedPlayerNames: string[];
+  protectionAttempted: boolean;
+  protectionResult: ProtectionResult;
+};
+
 type PublicGame = {
   status: string;
   endedWinner: string;
   vote1RevealedHunterId: string;
   revealedHunterNames?: string[];
-  revealed: {
-    killedExists: boolean;
-    killedPlayerNames: string[];
-    protectionAttempted: boolean;
-    protectionResult: ProtectionResult;
-  };
+  // ✅ 방어: 서버가 어떤 시점에 revealed를 안 내려줘도 프론트가 안 터지게 optional 처리
+  revealed?: Revealed;
   players: PublicPlayer[];
 };
 
@@ -143,7 +146,6 @@ export default function Player() {
     return `${import.meta.env.BASE_URL}avatars/${me.playerId}.png`;
   }, [me]);
 
-  // ✅ 이름이 혹시 상속/표시 이슈가 있어도 값 자체는 확실히 잡히게(필요시 fallback)
   const myDisplayName = useMemo(() => {
     if (me?.name && me.name.trim()) return me.name;
     if (!me || !game) return "-";
@@ -200,11 +202,11 @@ export default function Player() {
 
   const candidatesVote2 = useMemo(() => {
     if (!game || !me) return [];
-    const revealed = (game.vote1RevealedHunterId || "").trim();
+    const revealedHunterId = (game.vote1RevealedHunterId || "").trim();
     return game.players.filter((p) => {
       if (!isTrue(p.alive)) return false;
       if (p.playerId === me.playerId) return false;
-      if (revealed && p.playerId === revealed) return false;
+      if (revealedHunterId && p.playerId === revealedHunterId) return false;
       return true;
     });
   }, [game, me]);
@@ -314,6 +316,15 @@ export default function Player() {
   // ============================================================
   // GAME UI
   // ============================================================
+
+  // ✅ 핵심 방어: revealed가 undefined여도 절대 터지지 않게 기본값 부여
+  const revealed: Revealed = game?.revealed ?? {
+    killedExists: false,
+    killedPlayerNames: [],
+    protectionAttempted: false,
+    protectionResult: "none",
+  };
+
   const stepIdx = phaseIndex(phase);
   const showVote1 = alive && phase === "vote1";
   const showVote2 = alive && phase === "vote2";
@@ -341,7 +352,6 @@ export default function Player() {
             </div>
 
             <div style={{ flex: 1 }}>
-              {/* ✅ color 명시 */}
               <div style={{ fontSize: 20, fontWeight: 900, color: "#111" }}>{myDisplayName}</div>
 
               <div style={{ marginTop: 6, display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -409,10 +419,10 @@ export default function Player() {
               label="사망자"
               value={
                 phase === "hikeEnd" || phase.startsWith("vote") || phase.startsWith("ended")
-                  ? game?.revealed.killedPlayerNames.length
+                  ? revealed.killedPlayerNames.length
                     ? "있음"
                     : "없음"
-                  : game?.revealed.killedExists
+                  : revealed.killedExists
                   ? "있음"
                   : "없음"
               }
@@ -421,15 +431,12 @@ export default function Player() {
               label="사망자 목록"
               value={
                 phase === "hikeEnd" || phase.startsWith("vote") || phase.startsWith("ended")
-                  ? game?.revealed.killedPlayerNames.join(", ") || "-"
+                  ? revealed.killedPlayerNames.join(", ") || "-"
                   : "-"
               }
             />
-            <InfoRow label="보호 시도" value={protectionAttemptText(!!game?.revealed.protectionAttempted)} />
-            <InfoRow
-              label="보호 성공"
-              value={protectionResultText(!!game?.revealed.protectionAttempted, game?.revealed.protectionResult || "none")}
-            />
+            <InfoRow label="보호 시도" value={protectionAttemptText(!!revealed.protectionAttempted)} />
+            <InfoRow label="보호 성공" value={protectionResultText(!!revealed.protectionAttempted, revealed.protectionResult)} />
           </div>
         </section>
 
@@ -721,12 +728,11 @@ const styles: Record<string, any> = {
     color: "#111",
   },
 
-  // ✅ 여기서부터 "게임 화면 글자색" 고정
   page: {
     minHeight: "100vh",
     background: "linear-gradient(180deg, rgba(255,245,215,1) 0%, rgba(255,255,255,1) 55%, rgba(245,250,255,1) 100%)",
     padding: "16px 12px",
-    color: "#111", // ✅ 핵심: 기본 텍스트 색을 검정으로 강제
+    color: "#111",
   },
   container: {
     maxWidth: 980,
@@ -764,7 +770,7 @@ const styles: Record<string, any> = {
     background: "rgba(255,200,60,0.95)",
     fontWeight: 900,
     cursor: "pointer",
-    color: "#111", // ✅ 버튼 글씨 색 강제
+    color: "#111",
   },
   secondaryBtn: {
     padding: "10px 12px",
@@ -773,7 +779,7 @@ const styles: Record<string, any> = {
     background: "rgba(255,255,255,0.85)",
     fontWeight: 900,
     cursor: "pointer",
-    color: "#111", // ✅ 버튼 글씨 색 강제
+    color: "#111",
   },
   select: {
     width: "100%",

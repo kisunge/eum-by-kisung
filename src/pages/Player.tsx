@@ -35,7 +35,7 @@ function isTrue(v: any) {
 }
 
 function phaseLabelPlayer(phase: string) {
-  switch (phase) {
+  switch (phase) {`
     case "lobby":
       return "대기";
     case "hike":
@@ -310,21 +310,7 @@ export default function Player() {
                 color: "rgba(255,255,255,0.92)",
               }}
             >
-              <div style={{ fontWeight: 900, marginBottom: 6 }}>세계관</div>
-              <div>
-                이음피아 세상에는 많은 동물들이 평화롭게 살아가고 있었습니다.
-                <br />
-                하지만 어느 날부터 동물 친구들이 하나둘씩 사라지기 시작했습니다.
-              </div>
-              <div style={{ marginTop: 8 }}>
-                그 이유는 바로… <b>동물의 탈을 쓴 사냥꾼</b>들이 우리 사이에 숨어 있었기 때문입니다.
-              </div>
-              <div style={{ marginTop: 8 }}>
-                동물들의 목표: <b>사냥꾼 두 명을 모두 밝혀내기</b>
-                <br />
-                사냥꾼의 목표: <b>정체가 비밀인 ‘동물의 왕’을 찾아내기</b>
-              </div>
-            </div>
+                         </div>
           </div>
 
           <div style={{ marginTop: 10, textAlign: "center", fontSize: 12, color: "rgba(255,255,255,0.85)" }}>

@@ -34,30 +34,43 @@ function isTrue(v: any) {
 
 function phaseLabelPlayer(phase: string) {
   switch (phase) {
-    case "lobby": return "대기";
-    case "hike": return "등산시작";
-    case "hikeEnd": return "등산종료";
-    case "vote1Intro": return "1차투표(설명)";
-    case "vote1": return "1차투표(진행)";
-    case "vote2Intro": return "2차투표(설명)";
-    case "vote2": return "2차투표(진행)";
-    case "endedHunters": return "최종결과 확인";
-    case "endedAnimals": return "최종결과 확인";
-    default: return phase;
+    case "lobby":
+      return "대기";
+    case "hike":
+      return "등산시작";
+    case "hikeEnd":
+      return "등산종료";
+    case "vote1Intro":
+      return "1차투표(설명)";
+    case "vote1":
+      return "1차투표(진행)";
+    case "vote2Intro":
+      return "2차투표(설명)";
+    case "vote2":
+      return "2차투표(진행)";
+    case "endedHunters":
+      return "최종결과 확인";
+    case "endedAnimals":
+      return "최종결과 확인";
+    default:
+      return phase;
   }
 }
 
 function roleLabel(role: Me["role"]) {
   switch (role) {
-    case "king": return "동물의 왕";
-    case "hunter": return "동물의 탈을 쓴 사냥꾼";
-    case "animal": return "동물친구들";
-    default: return role;
+    case "king":
+      return "동물의 왕";
+    case "hunter":
+      return "동물의 탈을 쓴 사냥꾼";
+    case "animal":
+      return "동물친구들";
+    default:
+      return role;
   }
 }
 
 function aliveLabel(phase: string, alive: boolean) {
-  // 등산종료 이후부터만 공개
   const canShow = phase === "hikeEnd" || phase.startsWith("vote") || phase.startsWith("ended");
   if (!canShow) return "알 수 없음";
   return alive ? "생존" : "사망";
@@ -84,7 +97,6 @@ function phaseSteps() {
 }
 
 function phaseIndex(phase: string) {
-  // intro 단계는 해당 투표 단계로 간주
   if (phase === "vote1Intro") return 1;
   if (phase === "vote2Intro") return 2;
 
@@ -93,7 +105,6 @@ function phaseIndex(phase: string) {
   if (phase.startsWith("vote2")) return 2;
   if (phase.startsWith("ended")) return 3;
 
-  // lobby/hikeEnd는 0 근처로 처리
   if (phase === "lobby") return -1;
   if (phase === "hikeEnd") return 0;
 
@@ -112,7 +123,6 @@ export default function Player() {
   const [me, setMe] = useState<Me | null>(null);
   const [msg, setMsg] = useState("");
 
-  // vote state
   const [voteTarget, setVoteTarget] = useState("");
   const [voteReason, setVoteReason] = useState("");
 
@@ -121,7 +131,6 @@ export default function Player() {
 
   const splashUrl = `${import.meta.env.BASE_URL}ui/splash.png`;
 
-  // ✅ START 버튼 히트박스 좌표 (페피님이 조정)
   const START_BTN = {
     left: "23%",
     top: "75%",
@@ -129,11 +138,18 @@ export default function Player() {
     height: "20%",
   };
 
-  // ✅ 프로필 캐릭터 이미지 (p1~p7)
   const myAvatarUrl = useMemo(() => {
     if (!me) return "";
-    return `${import.meta.env.BASE_URL}avatars/${me.playerId}.png`; // 예: public/avatars/p1.png
+    return `${import.meta.env.BASE_URL}avatars/${me.playerId}.png`;
   }, [me]);
+
+  // ✅ 이름이 혹시 상속/표시 이슈가 있어도 값 자체는 확실히 잡히게(필요시 fallback)
+  const myDisplayName = useMemo(() => {
+    if (me?.name && me.name.trim()) return me.name;
+    if (!me || !game) return "-";
+    const p = game.players.find((x) => x.playerId === me.playerId);
+    return (p?.name || "-").trim() || "-";
+  }, [me, game]);
 
   async function login() {
     try {
@@ -219,7 +235,6 @@ export default function Player() {
       <div style={styles.fullBlackCenter}>
         <div style={{ position: "relative", width: "min(980px, 100%)" }}>
           <img src={splashUrl} alt="splash" style={styles.splashImg} />
-
           <button
             onClick={() => setUiStage("login")}
             aria-label="START"
@@ -297,14 +312,12 @@ export default function Player() {
   }
 
   // ============================================================
-  // GAME UI (새 UI)
+  // GAME UI
   // ============================================================
   const stepIdx = phaseIndex(phase);
   const showVote1 = alive && phase === "vote1";
   const showVote2 = alive && phase === "vote2";
   const showVoteIntro = phase === "vote1Intro" || phase === "vote2Intro";
-
-  // 행동 정보는 지금은 "섹션만" 만들고, 나중에 요청하신 방식(카톡 안내 + host가 처리)로 연결할 예정
   const showActionInfo = me?.role === "hunter" || me?.role === "king";
 
   return (
@@ -328,13 +341,14 @@ export default function Player() {
             </div>
 
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 20, fontWeight: 900 }}>{me?.name || "-"}</div>
+              {/* ✅ color 명시 */}
+              <div style={{ fontSize: 20, fontWeight: 900, color: "#111" }}>{myDisplayName}</div>
+
               <div style={{ marginTop: 6, display: "flex", gap: 10, flexWrap: "wrap" }}>
                 <Badge label={`역할: ${me ? roleLabel(me.role) : "-"}`} />
                 <Badge label={`생존: ${aliveLabel(phase, alive)}`} />
               </div>
 
-              {/* 왕/사냥꾼 정보(선택) */}
               {me?.role === "king" && me.knownHunter ? (
                 <div style={{ marginTop: 10, fontSize: 13, color: "#444" }}>
                   내가 아는 사냥꾼 1명: <b>{me.knownHunter.name}</b>
@@ -366,7 +380,7 @@ export default function Player() {
 
           <div style={{ marginTop: 14 }}>
             <details open>
-              <summary style={{ cursor: "pointer", fontWeight: 900 }}>규칙 설명</summary>
+              <summary style={{ cursor: "pointer", fontWeight: 900, color: "#111" }}>규칙 설명</summary>
               <ol style={{ marginTop: 10, lineHeight: 1.7, color: "#333" }}>
                 <li>7인의 동물 중에는 사냥꾼 2명과 동물의 왕 1명이 숨어 있습니다.</li>
                 <li>사냥꾼은 등산을 하는 도중 비밀리에 동물을 사냥을 할 수 있습니다.</li>
@@ -395,22 +409,23 @@ export default function Player() {
               label="사망자"
               value={
                 phase === "hikeEnd" || phase.startsWith("vote") || phase.startsWith("ended")
-                  ? (game?.revealed.killedPlayerNames.length ? "있음" : "없음")
-                  : (game?.revealed.killedExists ? "있음" : "없음")
+                  ? game?.revealed.killedPlayerNames.length
+                    ? "있음"
+                    : "없음"
+                  : game?.revealed.killedExists
+                  ? "있음"
+                  : "없음"
               }
             />
             <InfoRow
               label="사망자 목록"
               value={
                 phase === "hikeEnd" || phase.startsWith("vote") || phase.startsWith("ended")
-                  ? (game?.revealed.killedPlayerNames.join(", ") || "-")
+                  ? game?.revealed.killedPlayerNames.join(", ") || "-"
                   : "-"
               }
             />
-            <InfoRow
-              label="보호 시도"
-              value={protectionAttemptText(!!game?.revealed.protectionAttempted)}
-            />
+            <InfoRow label="보호 시도" value={protectionAttemptText(!!game?.revealed.protectionAttempted)} />
             <InfoRow
               label="보호 성공"
               value={protectionResultText(!!game?.revealed.protectionAttempted, game?.revealed.protectionResult || "none")}
@@ -418,7 +433,7 @@ export default function Player() {
           </div>
         </section>
 
-        {/* 4) 행동 정보 (사냥꾼/왕만 노출) */}
+        {/* 4) 행동 정보 */}
         {showActionInfo && (
           <section style={styles.card}>
             <div style={styles.cardTitle}>행동 정보</div>
@@ -426,7 +441,7 @@ export default function Player() {
             <div style={{ marginTop: 10, color: "#333", lineHeight: 1.7 }}>
               {me?.role === "hunter" ? (
                 <>
-                  <div style={{ fontWeight: 900 }}>사냥꾼 안내</div>
+                  <div style={{ fontWeight: 900, color: "#111" }}>사냥꾼 안내</div>
                   <div style={{ marginTop: 6 }}>
                     등산 중, <b>사냥할 동물의 신발 사진</b>을 찍어서 진행자에게 카톡으로 보내세요.
                   </div>
@@ -435,7 +450,7 @@ export default function Player() {
 
               {me?.role === "king" ? (
                 <>
-                  <div style={{ fontWeight: 900 }}>동물의 왕 안내</div>
+                  <div style={{ fontWeight: 900, color: "#111" }}>동물의 왕 안내</div>
                   <div style={{ marginTop: 6 }}>
                     등산 중, <b>보호할 동물의 손 사진</b>을 찍어서 진행자에게 카톡으로 보내세요. (본인 포함 가능)
                   </div>
@@ -445,7 +460,7 @@ export default function Player() {
           </section>
         )}
 
-        {/* 투표 섹션 (기존 기능 유지) */}
+        {/* 투표 섹션 */}
         <section style={styles.card}>
           <div style={styles.cardTitle}>투표</div>
 
@@ -454,9 +469,7 @@ export default function Player() {
               <div style={{ color: "#555" }}>사망자는 투표할 수 없어요.</div>
             ) : null}
 
-            {showVoteIntro ? (
-              <div style={{ color: "#555" }}>진행자가 투표 설명 중입니다. 잠시만 기다려주세요.</div>
-            ) : null}
+            {showVoteIntro ? <div style={{ color: "#555" }}>진행자가 투표 설명 중입니다. 잠시만 기다려주세요.</div> : null}
 
             {showVote1 ? (
               <VoteBox
@@ -482,9 +495,7 @@ export default function Player() {
               />
             ) : null}
 
-            {!showVoteIntro && !showVote1 && !showVote2 ? (
-              <div style={{ color: "#555" }}>현재 투표 단계가 아닙니다.</div>
-            ) : null}
+            {!showVoteIntro && !showVote1 && !showVote2 ? <div style={{ color: "#555" }}>현재 투표 단계가 아닙니다.</div> : null}
           </div>
         </section>
 
@@ -583,9 +594,7 @@ function StepBar(props: { currentIndex: number }) {
               {done ? <span style={{ marginLeft: 6, fontWeight: 900 }}>✓</span> : null}
             </div>
 
-            {idx !== steps.length - 1 ? (
-              <div style={{ width: 18, height: 2, background: "rgba(0,0,0,0.18)" }} />
-            ) : null}
+            {idx !== steps.length - 1 ? <div style={{ width: 18, height: 2, background: "rgba(0,0,0,0.18)" }} /> : null}
           </div>
         );
       })}
@@ -604,8 +613,16 @@ function VoteBox(props: {
 }) {
   const canSubmit = props.target.trim() && props.reason.trim();
   return (
-    <div style={{ border: "1px solid rgba(0,0,0,0.10)", padding: 12, borderRadius: 12, background: "rgba(255,255,255,0.65)" }}>
-      <div style={{ marginBottom: 10, fontWeight: 900 }}>{props.title}</div>
+    <div
+      style={{
+        border: "1px solid rgba(0,0,0,0.10)",
+        padding: 12,
+        borderRadius: 12,
+        background: "rgba(255,255,255,0.65)",
+        color: "#111",
+      }}
+    >
+      <div style={{ marginBottom: 10, fontWeight: 900, color: "#111" }}>{props.title}</div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10 }}>
         <select value={props.target} onChange={(e) => props.setTarget(e.target.value)} style={styles.select}>
@@ -629,9 +646,7 @@ function VoteBox(props: {
           제출
         </button>
 
-        {!props.reason.trim() ? (
-          <div style={{ fontSize: 12, color: "#666" }}>사유를 입력해야 제출할 수 있어요.</div>
-        ) : null}
+        {!props.reason.trim() ? <div style={{ fontSize: 12, color: "#666" }}>사유를 입력해야 제출할 수 있어요.</div> : null}
       </div>
     </div>
   );
@@ -703,12 +718,15 @@ const styles: Record<string, any> = {
     background: "rgba(255,200,60,0.95)",
     fontWeight: 900,
     cursor: "pointer",
+    color: "#111",
   },
 
+  // ✅ 여기서부터 "게임 화면 글자색" 고정
   page: {
     minHeight: "100vh",
     background: "linear-gradient(180deg, rgba(255,245,215,1) 0%, rgba(255,255,255,1) 55%, rgba(245,250,255,1) 100%)",
     padding: "16px 12px",
+    color: "#111", // ✅ 핵심: 기본 텍스트 색을 검정으로 강제
   },
   container: {
     maxWidth: 980,
@@ -746,6 +764,7 @@ const styles: Record<string, any> = {
     background: "rgba(255,200,60,0.95)",
     fontWeight: 900,
     cursor: "pointer",
+    color: "#111", // ✅ 버튼 글씨 색 강제
   },
   secondaryBtn: {
     padding: "10px 12px",
@@ -754,6 +773,7 @@ const styles: Record<string, any> = {
     background: "rgba(255,255,255,0.85)",
     fontWeight: 900,
     cursor: "pointer",
+    color: "#111", // ✅ 버튼 글씨 색 강제
   },
   select: {
     width: "100%",
@@ -763,6 +783,7 @@ const styles: Record<string, any> = {
     background: "rgba(255,255,255,0.95)",
     outline: "none",
     fontWeight: 700,
+    color: "#111",
   },
   textarea: {
     width: "100%",
@@ -772,5 +793,6 @@ const styles: Record<string, any> = {
     background: "rgba(255,255,255,0.95)",
     outline: "none",
     fontWeight: 600,
+    color: "#111",
   },
 };

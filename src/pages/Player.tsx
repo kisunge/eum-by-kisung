@@ -16,7 +16,7 @@ type PublicGame = {
   endedWinner: string;
   vote1RevealedHunterId: string;
   revealedHunterNames?: string[];
-  revealed?: Partial<Revealed>; // ✅ 부분만 올 수도 있으니 Partial로
+  revealed?: Partial<Revealed>;
   players: PublicPlayer[];
 };
 
@@ -150,6 +150,9 @@ export default function Player() {
     const p = game.players.find((x) => x.playerId === me.playerId);
     return (p?.name || "-").trim() || "-";
   }, [me, game]);
+
+  // ✅ 카카오 링크
+  const KAKAO_LINK = "http://qr.kakao.com/talk/uP76SnGIaCCpwgnfKQu0LTjQsvQ-";
 
   async function login() {
     try {
@@ -315,14 +318,16 @@ export default function Player() {
   // GAME UI
   // ============================================================
 
-  // ✅ 핵심: revealed가 "있는데 일부 필드가 없는 경우"까지 전부 방어
+  // ✅ revealed 필드별 방어(하이크 종료 이후 크래시 방지)
   const revealedRaw = game?.revealed ?? {};
   const revealed: Revealed = {
     killedExists: !!revealedRaw.killedExists,
     killedPlayerNames: Array.isArray(revealedRaw.killedPlayerNames) ? revealedRaw.killedPlayerNames : [],
     protectionAttempted: !!revealedRaw.protectionAttempted,
     protectionResult:
-      revealedRaw.protectionResult === "success" || revealedRaw.protectionResult === "partial" || revealedRaw.protectionResult === "none"
+      revealedRaw.protectionResult === "success" ||
+      revealedRaw.protectionResult === "partial" ||
+      revealedRaw.protectionResult === "none"
         ? revealedRaw.protectionResult
         : "none",
   };
@@ -336,6 +341,7 @@ export default function Player() {
   return (
     <div style={styles.page}>
       <div style={styles.container}>
+        {/* 1) 프로필 영역 */}
         <section style={styles.card}>
           <div style={styles.cardTitle}>프로필</div>
 
@@ -374,6 +380,7 @@ export default function Player() {
           </div>
         </section>
 
+        {/* 2) 게임 단계 + 규칙 */}
         <section style={styles.card}>
           <div style={styles.cardTitle}>게임 단계</div>
 
@@ -410,6 +417,7 @@ export default function Player() {
           </div>
         </section>
 
+        {/* 3) 게임 진행 정보 */}
         <section style={styles.card}>
           <div style={styles.cardTitle}>게임 진행 정보</div>
 
@@ -439,6 +447,7 @@ export default function Player() {
           </div>
         </section>
 
+        {/* 4) 행동 정보 (사냥꾼/왕만 노출) */}
         {showActionInfo && (
           <section style={styles.card}>
             <div style={styles.cardTitle}>행동 정보</div>
@@ -450,7 +459,7 @@ export default function Player() {
                   <div style={{ marginTop: 6 }}>
                     등산 중, <b>사냥할 동물의 신발 사진</b>을 찍어서 진행자에게 카톡으로 보내세요.
                   </div>
-                                  </>
+                </>
               ) : null}
 
               {me?.role === "king" ? (
@@ -459,13 +468,27 @@ export default function Player() {
                   <div style={{ marginTop: 6 }}>
                     등산 중, <b>보호할 동물의 손 사진</b>을 찍어서 진행자에게 카톡으로 보내세요. (본인 포함 가능)
                   </div>
-                
                 </>
               ) : null}
+
+              {/* ✅ 추가: 진행자 카톡 이동 버튼 */}
+              <div style={{ marginTop: 12 }}>
+                <a
+                  href={KAKAO_LINK}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ textDecoration: "none" }}
+                >
+                  <button style={{ ...styles.primaryBtn, width: "100%" }}>
+                    진행자의 카톡으로 가기
+                  </button>
+                </a>
+              </div>
             </div>
           </section>
         )}
 
+        {/* 투표 섹션 */}
         <section style={styles.card}>
           <div style={styles.cardTitle}>투표</div>
 

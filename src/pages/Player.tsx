@@ -4,10 +4,6 @@ import { callApi } from "../api";
 type PublicPlayer = { playerId: string; name: string; alive: any; roleRevealed: any };
 type ProtectionResult = "none" | "success" | "partial";
 
-// ✅ 공개 투표 결과 타입 (GAS vote1PublicJson / vote2PublicJson)
-type VotePublicRow = { targetId: string; targetName: string; count: number; reasons: string[] };
-type VotePublic = { rows: VotePublicRow[]; success?: boolean; revealedHunterIds?: string[] };
-
 type PublicGame = {
   status: string;
   endedWinner: string;
@@ -21,9 +17,21 @@ type PublicGame = {
   };
   players: PublicPlayer[];
 
-  // ✅ 추가: 투표 결과 공개용 (모든 참여자에게 동일 노출)
-  vote1Public?: VotePublic | null;
-  vote2Public?: VotePublic | null;
+  // ✅ (GAS/프론트에서 이미 추가했다면 사용 가능)
+  vote1Result?: {
+    finalized: boolean;
+    rows: { targetName: string; count: number; reasons: string[] }[];
+    revealedHunterId?: string;
+    revealedHunterName?: string;
+    success?: boolean; // 2표 이상 사냥꾼 색출 성공 여부
+  };
+  vote2Result?: {
+    finalized: boolean;
+    rows: { targetName: string; count: number; reasons: string[] }[];
+    revealedHunterId?: string;
+    revealedHunterName?: string;
+    success?: boolean; // 3표 이상 사냥꾼 색출 성공 여부
+  };
 };
 
 type Me = {
@@ -42,25 +50,39 @@ function isTrue(v: any) {
 
 function phaseLabelPlayer(phase: string) {
   switch (phase) {
-    case "lobby": return "대기";
-    case "hike": return "등산시작";
-    case "hikeEnd": return "등산종료";
-    case "vote1Intro": return "1차투표(설명)";
-    case "vote1": return "1차투표(진행)";
-    case "vote2Intro": return "2차투표(설명)";
-    case "vote2": return "2차투표(진행)";
-    case "endedHunters": return "최종결과 확인";
-    case "endedAnimals": return "최종결과 확인";
-    default: return phase;
+    case "lobby":
+      return "대기";
+    case "hike":
+      return "등산시작";
+    case "hikeEnd":
+      return "등산종료";
+    case "vote1Intro":
+      return "1차투표(설명)";
+    case "vote1":
+      return "1차투표(진행)";
+    case "vote2Intro":
+      return "2차투표(설명)";
+    case "vote2":
+      return "2차투표(진행)";
+    case "endedHunters":
+      return "최종결과 확인";
+    case "endedAnimals":
+      return "최종결과 확인";
+    default:
+      return phase;
   }
 }
 
 function roleLabel(role: Me["role"]) {
   switch (role) {
-    case "king": return "동물의 왕";
-    case "hunter": return "동물의 탈을 쓴 사냥꾼";
-    case "animal": return "동물친구들";
-    default: return role;
+    case "king":
+      return "동물의 왕";
+    case "hunter":
+      return "동물의 탈을 쓴 사냥꾼";
+    case "animal":
+      return "동물친구들";
+    default:
+      return role;
   }
 }
 
@@ -120,11 +142,16 @@ export default function Player() {
   const [voteTarget, setVoteTarget] = useState("");
   const [voteReason, setVoteReason] = useState("");
 
-  const phase = game?.status || "lobby";
+  // ✅ status/role 정규화(공백/대소문자 이슈 대응)
+  const phase = useMemo(() => String(game?.status ?? "lobby").trim(), [game?.status]);
+  const myRole = useMemo(() => String(me?.role ?? "").trim().toLowerCase(), [me?.role]);
+
   const alive = useMemo(() => (me ? isTrue(me.alive) : false), [me]);
 
+  // ✅ GitHub Pages 하위 경로 대응
   const splashUrl = `${import.meta.env.BASE_URL}ui/splash.png`;
 
+  // ✅ START 버튼 히트박스 좌표(페피님이 조정)
   const START_BTN = {
     left: "23%",
     top: "75%",
@@ -132,15 +159,20 @@ export default function Player() {
     height: "20%",
   };
 
+  // ✅ 진행자 카카오톡 링크
+  const KAKAO_URL = "http://qr.kakao.com/talk/uP76SnGIaCCpwgnfKQu0LTjQsvQ-";
+
+  // ✅ 프로필 캐릭터(p1~p7)
   const myAvatarUrl = useMemo(() => {
     if (!me) return "";
     return `${import.meta.env.BASE_URL}avatars/${me.playerId}.png`;
   }, [me]);
 
+  // ✅ 이름이 비어오는 경우 players에서 fallback
   const myDisplayName = useMemo(() => {
-    if (me?.name && me.name.trim()) return me.name;
+    if (me?.name && me.name.trim()) return me.name.trim();
     if (!me || !game) return "-";
-    const p = game.players.find((x) => x.playerId === me.playerId);
+    const p = game.players?.find((x) => x.playerId === me.playerId);
     return (p?.name || "-").trim() || "-";
   }, [me, game]);
 
@@ -188,13 +220,13 @@ export default function Player() {
 
   const candidatesVote1 = useMemo(() => {
     if (!game || !me) return [];
-    return game.players.filter((p) => isTrue(p.alive) && p.playerId !== me.playerId);
+    return (game.players || []).filter((p) => isTrue(p.alive) && p.playerId !== me.playerId);
   }, [game, me]);
 
   const candidatesVote2 = useMemo(() => {
     if (!game || !me) return [];
-    const revealed = (game.vote1RevealedHunterId || "").trim();
-    return game.players.filter((p) => {
+    const revealed = String(game.vote1RevealedHunterId || "").trim();
+    return (game.players || []).filter((p) => {
       if (!isTrue(p.alive)) return false;
       if (p.playerId === me.playerId) return false;
       if (revealed && p.playerId === revealed) return false;
@@ -228,6 +260,7 @@ export default function Player() {
       <div style={styles.fullBlackCenter}>
         <div style={{ position: "relative", width: "min(980px, 100%)" }}>
           <img src={splashUrl} alt="splash" style={styles.splashImg} />
+
           <button
             onClick={() => setUiStage("login")}
             aria-label="START"
@@ -308,237 +341,259 @@ export default function Player() {
   // GAME UI
   // ============================================================
   const stepIdx = phaseIndex(phase);
-
-  // 투표 입력 UI는 "살아있고 해당 라운드일 때만"
   const showVote1 = alive && phase === "vote1";
   const showVote2 = alive && phase === "vote2";
   const showVoteIntro = phase === "vote1Intro" || phase === "vote2Intro";
 
-  // ✅ 개선점 1: 행동 정보는 "등산 중(hike)일 때만" 보이게
-  const showActionInfo = phase === "hike" && (me?.role === "hunter" || me?.role === "king");
-
-  // ✅ 개선점 2: 투표 결과 박스는 votePublic 값이 있으면 "누구에게나" 보임 (사망/역할 무관)
-  const showVote1Result = !!game?.vote1Public?.rows?.length;
-  const showVote2Result = !!game?.vote2Public?.rows?.length;
+  // ✅ 핵심: 행동정보는 "등산시작(hike)"일 때만 노출
+  // ✅ role은 정규화된 myRole로 비교
+  const showActionInfo = phase === "hike" && (myRole === "hunter" || myRole === "king");
 
   return (
     <div style={styles.page}>
       <div style={styles.container}>
-        {/* 1) 프로필 영역 */}
-        <section style={styles.card}>
-          <div style={styles.cardTitle}>프로필</div>
+        {!me || !game ? (
+          <div style={{ color: "#111", fontWeight: 800 }}>게임 정보를 불러오는 중...</div>
+        ) : (
+          <>
+            {/* 1) 프로필 영역 */}
+            <section style={styles.card}>
+              <div style={styles.cardTitle}>프로필</div>
 
-          <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
-            <div style={styles.avatarWrap}>
-              {myAvatarUrl ? (
-                <img
-                  src={myAvatarUrl}
-                  alt="avatar"
-                  style={{ width: "100%", height: "100%", imageRendering: "pixelated" as any }}
-                />
-              ) : (
-                <div style={{ color: "#999" }}>-</div>
-              )}
-            </div>
+              <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
+                <div style={styles.avatarWrap}>
+                  {myAvatarUrl ? (
+                    <img
+                      src={myAvatarUrl}
+                      alt="avatar"
+                      style={{ width: "100%", height: "100%", imageRendering: "pixelated" as any }}
+                    />
+                  ) : (
+                    <div style={{ color: "#999" }}>-</div>
+                  )}
+                </div>
 
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 20, fontWeight: 900, color: "#111" }}>{myDisplayName}</div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 20, fontWeight: 900, color: "#111" }}>{myDisplayName}</div>
 
-              <div style={{ marginTop: 6, display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <Badge label={`역할: ${me ? roleLabel(me.role) : "-"}`} />
-                <Badge label={`생존: ${aliveLabel(phase, alive)}`} />
+                  <div style={{ marginTop: 6, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    <Badge label={`역할: ${roleLabel(me.role)}`} />
+                    <Badge label={`생존: ${aliveLabel(phase, alive)}`} />
+                  </div>
+
+                  {myRole === "king" && me.knownHunter ? (
+                    <div style={{ marginTop: 10, fontSize: 13, color: "#444" }}>
+                      내가 아는 사냥꾼 1명: <b>{me.knownHunter.name}</b>
+                    </div>
+                  ) : null}
+
+                  {myRole === "hunter" && me.otherHunter ? (
+                    <div style={{ marginTop: 10, fontSize: 13, color: "#444" }}>
+                      다른 사냥꾼: <b>{me.otherHunter.name}</b>
+                    </div>
+                  ) : null}
+
+                  {/* ✅ 임시 디버그(원하면 지워도 됨) */}
+                  {/* <div style={{ marginTop: 6, fontSize: 12, color: "#666" }}>
+                    debug: phase="{phase}" / role="{myRole}"
+                  </div> */}
+                </div>
+              </div>
+            </section>
+
+            {/* 2) 게임 단계 + 규칙 */}
+            <section style={styles.card}>
+              <div style={styles.cardTitle}>게임 단계</div>
+
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontSize: 14, color: "#555" }}>
+                  현재 단계: <b style={{ color: "#111" }}>{phaseLabelPlayer(phase)}</b>
+                  {game?.endedWinner ? <span> / 승자: {game.endedWinner}</span> : null}
+                </div>
+
+                <div style={{ marginTop: 12 }}>
+                  <StepBar currentIndex={stepIdx} />
+                </div>
               </div>
 
-              {me?.role === "king" && me.knownHunter ? (
-                <div style={{ marginTop: 10, fontSize: 13, color: "#444" }}>
-                  내가 아는 사냥꾼 1명: <b>{me.knownHunter.name}</b>
-                </div>
-              ) : null}
-              {me?.role === "hunter" && me.otherHunter ? (
-                <div style={{ marginTop: 10, fontSize: 13, color: "#444" }}>
-                  다른 사냥꾼: <b>{me.otherHunter.name}</b>
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </section>
+              <div style={{ marginTop: 14 }}>
+                <details open>
+                  <summary style={{ cursor: "pointer", fontWeight: 900, color: "#111" }}>규칙 설명</summary>
+                  <ol style={{ marginTop: 10, lineHeight: 1.7, color: "#333" }}>
+                    <li>7인의 동물 중 사냥꾼 2명과 동물의 왕 1명이 숨어 있습니다.</li>
+                    <li>사냥꾼은 등산을 하는 도중 비밀리에 동물을 사냥을 할 수 있습니다.</li>
+                    <li>동물의 왕은 사냥꾼의 사냥으로부터 동물친구를 보호(본인포함) 할 수 있습니다.</li>
+                    <li>사냥 방법과 보호 방법은 본인만이 알고 있습니다.</li>
+                    <li>동물의 왕은 사냥꾼 중 1명이 누구인지 알고 있습니다.</li>
+                    <li>
+                      등산이 끝나고 나면 두 차례의 투표를 통해 사냥꾼을 색출합니다. 이때 이미 사냥을 당해 죽은 동물은 투표에
+                      참여할 수 없습니다.
+                    </li>
+                    <li>
+                      만약 동물들이 사냥꾼 2명 모두를 정확히 밝혀내면 동물들의 승리. 단, 사냥꾼 2명이 모두 들키더라도 마지막에
+                      왕의 정체를 맞추는 경우에는 사냥꾼의 최종 승리로 끝.
+                    </li>
+                  </ol>
+                </details>
+              </div>
+            </section>
 
-        {/* 2) 게임 단계 + 규칙 */}
-        <section style={styles.card}>
-          <div style={styles.cardTitle}>게임 단계</div>
+            {/* 3) 게임 진행 정보 */}
+            <section style={styles.card}>
+              <div style={styles.cardTitle}>게임 진행 정보</div>
 
-          <div style={{ marginTop: 10 }}>
-            <div style={{ fontSize: 14, color: "#555" }}>
-              현재 단계: <b style={{ color: "#111" }}>{phaseLabelPlayer(phase)}</b>
-              {game?.endedWinner ? <span> / 승자: {game.endedWinner}</span> : null}
-            </div>
+              <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr", gap: 10 }}>
+                <InfoRow
+                  label="사망자"
+                  value={
+                    phase === "hikeEnd" || phase.startsWith("vote") || phase.startsWith("ended")
+                      ? game.revealed.killedPlayerNames?.length
+                        ? "있음"
+                        : "없음"
+                      : game.revealed.killedExists
+                      ? "있음"
+                      : "없음"
+                  }
+                />
+                <InfoRow
+                  label="사망자 목록"
+                  value={
+                    phase === "hikeEnd" || phase.startsWith("vote") || phase.startsWith("ended")
+                      ? (game.revealed.killedPlayerNames || []).join(", ") || "-"
+                      : "-"
+                  }
+                />
+                <InfoRow label="보호 시도" value={protectionAttemptText(!!game.revealed.protectionAttempted)} />
+                <InfoRow
+                  label="보호 성공"
+                  value={protectionResultText(!!game.revealed.protectionAttempted, game.revealed.protectionResult || "none")}
+                />
+              </div>
+            </section>
 
-            <div style={{ marginTop: 12 }}>
-              <StepBar currentIndex={stepIdx} />
-            </div>
-          </div>
+            {/* 4) 행동 정보 (등산시작일 때만 + 사냥꾼/왕만) */}
+            {showActionInfo && (
+              <section style={styles.card}>
+                <div style={styles.cardTitle}>행동 정보</div>
 
-          <div style={{ marginTop: 14 }}>
-            <details open>
-              <summary style={{ cursor: "pointer", fontWeight: 900, color: "#111" }}>규칙 설명</summary>
-              <ol style={{ marginTop: 10, lineHeight: 1.7, color: "#333" }}>
-                <li>7인의 동물 중 사냥꾼 2명과 동물의 왕 1명이 숨어 있습니다.</li>
-                <li>사냥꾼은 등산을 하는 도중 비밀리에 동물을 사냥을 할 수 있습니다.</li>
-                <li>동물의 왕은 사냥꾼의 사냥으로부터 동물친구를 보호(본인포함) 할 수 있습니다.</li>
-                <li>사냥 방법과 보호 방법은 본인만이 알고 있습니다.</li>
-                <li>동물의 왕은 사냥꾼 중 1명이 누구인지 알고 있습니다.</li>
-                <li>
-                  등산이 끝나고 나면 두 차례의 투표를 통해 사냥꾼을 색출합니다. 이때 이미 사냥을 당해 죽은 동물은 투표에
-                  참여할 수 없습니다.
-                </li>
-                <li>
-                  만약 동물들이 사냥꾼 2명 모두를 정확히 밝혀내면 동물들의 승리. 단, 사냥꾼 2명이 모두 들키더라도 마지막에
-                  왕의 정체를 맞추는 경우에는 사냥꾼의 최종 승리로 끝.
-                </li>
-              </ol>
-            </details>
-          </div>
-        </section>
+                <div style={{ marginTop: 10, color: "#333", lineHeight: 1.7 }}>
+                  {myRole === "hunter" ? (
+                    <>
+                      <div style={{ fontWeight: 900, color: "#111" }}>사냥꾼 안내</div>
+                      <div style={{ marginTop: 6 }}>
+                        등산 중, <b>사냥할 동물의 신발 사진</b>을 찍어서 진행자에게 카톡으로 보내세요.
+                      </div>
+                    </>
+                  ) : null}
 
-        {/* 3) 게임 진행 정보 */}
-        <section style={styles.card}>
-          <div style={styles.cardTitle}>게임 진행 정보</div>
+                  {myRole === "king" ? (
+                    <>
+                      <div style={{ fontWeight: 900, color: "#111" }}>동물의 왕 안내</div>
+                      <div style={{ marginTop: 6 }}>
+                        등산 중, <b>보호할 동물의 손 사진</b>을 찍어서 진행자에게 카톡으로 보내세요. (본인 포함 가능)
+                      </div>
+                    </>
+                  ) : null}
 
-          <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr", gap: 10 }}>
-            <InfoRow
-              label="사망자"
-              value={
-                phase === "hikeEnd" || phase.startsWith("vote") || phase.startsWith("ended")
-                  ? game?.revealed.killedPlayerNames.length
-                    ? "있음"
-                    : "없음"
-                  : game?.revealed.killedExists
-                  ? "있음"
-                  : "없음"
-              }
-            />
-            <InfoRow
-              label="사망자 목록"
-              value={
-                phase === "hikeEnd" || phase.startsWith("vote") || phase.startsWith("ended")
-                  ? game?.revealed.killedPlayerNames.join(", ") || "-"
-                  : "-"
-              }
-            />
-            <InfoRow label="보호 시도" value={protectionAttemptText(!!game?.revealed.protectionAttempted)} />
-            <InfoRow
-              label="보호 성공"
-              value={protectionResultText(!!game?.revealed.protectionAttempted, game?.revealed.protectionResult || "none")}
-            />
-          </div>
-        </section>
-
-        {/* ✅ 개선점 2: 투표 결과(공개) — 누구에게나 동일 노출 */}
-        {showVote1Result ? (
-          <section style={styles.card}>
-            <div style={styles.cardTitle}>1차 투표 결과</div>
-            <div style={{ marginTop: 10 }}>
-              <VoteResultTable rows={game!.vote1Public!.rows} />
-            </div>
-          </section>
-        ) : null}
-
-        {showVote2Result ? (
-          <section style={styles.card}>
-            <div style={styles.cardTitle}>2차 투표 결과</div>
-            <div style={{ marginTop: 10 }}>
-              <VoteResultTable rows={game!.vote2Public!.rows} />
-            </div>
-          </section>
-        ) : null}
-
-        {/* ✅ 개선점 1: 행동 정보 (hike 단계에서만 노출) */}
-        {showActionInfo ? (
-          <section style={styles.card}>
-            <div style={styles.cardTitle}>행동 정보</div>
-
-            <div style={{ marginTop: 10, color: "#333", lineHeight: 1.7 }}>
-              {me?.role === "hunter" ? (
-                <>
-                  <div style={{ fontWeight: 900, color: "#111" }}>사냥꾼 안내</div>
-                  <div style={{ marginTop: 6 }}>
-                    등산 중, <b>사냥할 동물의 신발 사진</b>을 찍어서 진행자에게 카톡으로 보내세요.
+                  {/* ✅ 공통 버튼: 사냥꾼/왕 모두에게 동일 노출 */}
+                  <div style={{ marginTop: 12 }}>
+                    <a href={KAKAO_URL} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>
+                      <button style={styles.primaryBtn}>진행자의 카톡으로 가기</button>
+                    </a>
                   </div>
-                </>
-              ) : null}
+                </div>
+              </section>
+            )}
 
-              {me?.role === "king" ? (
-                <>
-                  <div style={{ fontWeight: 900, color: "#111" }}>동물의 왕 안내</div>
-                  <div style={{ marginTop: 6 }}>
-                    등산 중, <b>보호할 동물의 손 사진</b>을 찍어서 진행자에게 카톡으로 보내세요. (본인 포함 가능)
-                  </div>
-                </>
-              ) : null}
+            {/* 투표 섹션 */}
+            <section style={styles.card}>
+              <div style={styles.cardTitle}>투표</div>
+
+              <div style={{ marginTop: 10 }}>
+                {!alive && (phase === "hikeEnd" || phase.startsWith("vote") || phase.startsWith("ended")) ? (
+                  <div style={{ color: "#555" }}>사망자는 투표할 수 없어요.</div>
+                ) : null}
+
+                {showVoteIntro ? (
+                  <div style={{ color: "#555" }}>진행자가 투표 설명 중입니다. 잠시만 기다려주세요.</div>
+                ) : null}
+
+                {showVote1 ? (
+                  <VoteBox
+                    title="1차 투표 (사유 필수)"
+                    candidates={candidatesVote1}
+                    target={voteTarget}
+                    reason={voteReason}
+                    setTarget={setVoteTarget}
+                    setReason={setVoteReason}
+                    onSubmit={() => submitVote(1)}
+                  />
+                ) : null}
+
+                {showVote2 ? (
+                  <VoteBox
+                    title="2차 투표 (사유 필수)"
+                    candidates={candidatesVote2}
+                    target={voteTarget}
+                    reason={voteReason}
+                    setTarget={setVoteTarget}
+                    setReason={setVoteReason}
+                    onSubmit={() => submitVote(2)}
+                  />
+                ) : null}
+
+                {!showVoteIntro && !showVote1 && !showVote2 ? <div style={{ color: "#555" }}>현재 투표 단계가 아닙니다.</div> : null}
+              </div>
+            </section>
+
+            {/* ✅ (선택) 투표 결과 박스: 게임/프론트에서 vote1Result/vote2Result를 내려주는 경우 표시 */}
+            {(game.vote1Result?.finalized || game.vote2Result?.finalized) && (
+              <section style={styles.card}>
+                <div style={styles.cardTitle}>투표 결과</div>
+
+                <div style={{ marginTop: 10, display: "grid", gap: 12 }}>
+                  {game.vote1Result?.finalized ? (
+                    <VoteResultBlock
+                      roundTitle="1차 투표 결과"
+                      result={game.vote1Result}
+                      hunterImageId={game.vote1Result.revealedHunterId}
+                    />
+                  ) : null}
+
+                  {game.vote2Result?.finalized ? (
+                    <VoteResultBlock
+                      roundTitle="2차 투표 결과"
+                      result={game.vote2Result}
+                      hunterImageId={game.vote2Result.revealedHunterId}
+                    />
+                  ) : null}
+                </div>
+              </section>
+            )}
+
+            <div style={{ display: "flex", gap: 10, justifyContent: "space-between", alignItems: "center" }}>
+              <button
+                onClick={() => {
+                  localStorage.removeItem("token");
+                  setToken("");
+                  setMe(null);
+                  setGame(null);
+                  setMsg("");
+                  setUiStage("splash");
+                }}
+                style={styles.secondaryBtn}
+              >
+                로그아웃
+              </button>
+
+              <button onClick={() => refresh().catch(() => {})} style={styles.secondaryBtn}>
+                새로고침
+              </button>
             </div>
-          </section>
-        ) : null}
 
-        {/* 투표 섹션 (입력 UI는 살아있을 때만) */}
-        <section style={styles.card}>
-          <div style={styles.cardTitle}>투표</div>
-
-          <div style={{ marginTop: 10 }}>
-            {!alive && (phase === "hikeEnd" || phase.startsWith("vote") || phase.startsWith("ended")) ? (
-              <div style={{ color: "#555" }}>사망자는 투표할 수 없어요.</div>
-            ) : null}
-
-            {showVoteIntro ? <div style={{ color: "#555" }}>진행자가 투표 설명 중입니다. 잠시만 기다려주세요.</div> : null}
-
-            {showVote1 ? (
-              <VoteBox
-                title="1차 투표 (사유 필수)"
-                candidates={candidatesVote1}
-                target={voteTarget}
-                reason={voteReason}
-                setTarget={setVoteTarget}
-                setReason={setVoteReason}
-                onSubmit={() => submitVote(1)}
-              />
-            ) : null}
-
-            {showVote2 ? (
-              <VoteBox
-                title="2차 투표 (사유 필수)"
-                candidates={candidatesVote2}
-                target={voteTarget}
-                reason={voteReason}
-                setTarget={setVoteTarget}
-                setReason={setVoteReason}
-                onSubmit={() => submitVote(2)}
-              />
-            ) : null}
-
-            {!showVoteIntro && !showVote1 && !showVote2 ? <div style={{ color: "#555" }}>현재 투표 단계가 아닙니다.</div> : null}
-          </div>
-        </section>
-
-        <div style={{ display: "flex", gap: 10, justifyContent: "space-between", alignItems: "center" }}>
-          <button
-            onClick={() => {
-              localStorage.removeItem("token");
-              setToken("");
-              setMe(null);
-              setGame(null);
-              setMsg("");
-              setUiStage("splash");
-            }}
-            style={styles.secondaryBtn}
-          >
-            로그아웃
-          </button>
-
-          <button onClick={() => refresh().catch(() => {})} style={styles.secondaryBtn}>
-            새로고침
-          </button>
-        </div>
-
-        <div style={{ height: 20 }} />
+            <div style={{ height: 20 }} />
+          </>
+        )}
       </div>
     </div>
   );
@@ -621,53 +676,6 @@ function StepBar(props: { currentIndex: number }) {
   );
 }
 
-// ✅ 공개 투표 결과 표 (익명 집계)
-function VoteResultTable(props: { rows: VotePublicRow[] }) {
-  return (
-    <div style={{ overflowX: "auto" }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-        <thead>
-          <tr>
-            <th style={thStyle}>득표자</th>
-            <th style={thStyle}>득표수</th>
-            <th style={thStyle}>사유</th>
-          </tr>
-        </thead>
-        <tbody>
-          {props.rows.map((r) => (
-            <tr key={r.targetId}>
-              <td style={tdStyle}><b>{r.targetName}</b></td>
-              <td style={tdStyle}>{r.count}표</td>
-              <td style={tdStyle}>{(r.reasons || []).join(", ") || "-"}</td>
-            </tr>
-          ))}
-          {!props.rows.length ? (
-            <tr>
-              <td style={tdStyle} colSpan={3}>-</td>
-            </tr>
-          ) : null}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-const thStyle: React.CSSProperties = {
-  textAlign: "left",
-  padding: "10px 10px",
-  borderBottom: "1px solid rgba(0,0,0,0.12)",
-  color: "#222",
-  fontWeight: 900,
-  background: "rgba(255,255,255,0.75)",
-};
-
-const tdStyle: React.CSSProperties = {
-  padding: "10px 10px",
-  borderBottom: "1px solid rgba(0,0,0,0.08)",
-  color: "#111",
-  verticalAlign: "top",
-};
-
 function VoteBox(props: {
   title: string;
   candidates: { playerId: string; name: string }[];
@@ -713,6 +721,98 @@ function VoteBox(props: {
         </button>
 
         {!props.reason.trim() ? <div style={{ fontSize: 12, color: "#666" }}>사유를 입력해야 제출할 수 있어요.</div> : null}
+      </div>
+    </div>
+  );
+}
+
+/** ✅ 투표 결과 표시 블록(누가 누구 찍었는지 비공개: 득표자/득표수/사유만) */
+function VoteResultBlock(props: {
+  roundTitle: string;
+  result: { rows: { targetName: string; count: number; reasons: string[] }[]; revealedHunterName?: string; success?: boolean };
+  hunterImageId?: string;
+}) {
+  const rows = props.result.rows || [];
+  const success = !!props.result.success;
+
+  const hunterImg = useMemo(() => {
+    if (!props.hunterImageId) return "";
+    const id = String(props.hunterImageId).trim().toLowerCase();
+    if (id === "p2") return `${import.meta.env.BASE_URL}avatars/p2_hunter.png`;
+    if (id === "p3") return `${import.meta.env.BASE_URL}avatars/p3_hunter.png`;
+    return "";
+  }, [props.hunterImageId]);
+
+  return (
+    <div style={{ border: "1px solid rgba(0,0,0,0.10)", borderRadius: 14, padding: 12, background: "rgba(255,255,255,0.65)" }}>
+      <div style={{ fontWeight: 900, color: "#111" }}>{props.roundTitle}</div>
+
+      <div style={{ marginTop: 10 }}>
+        {rows.length ? (
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", padding: "8px 6px", borderBottom: "1px solid rgba(0,0,0,0.12)" }}>득표자</th>
+                <th style={{ textAlign: "left", padding: "8px 6px", borderBottom: "1px solid rgba(0,0,0,0.12)" }}>득표수</th>
+                <th style={{ textAlign: "left", padding: "8px 6px", borderBottom: "1px solid rgba(0,0,0,0.12)" }}>사유</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, idx) => (
+                <tr key={idx}>
+                  <td style={{ padding: "8px 6px", borderBottom: "1px solid rgba(0,0,0,0.06)", fontWeight: 900, color: "#111" }}>
+                    {r.targetName}
+                  </td>
+                  <td style={{ padding: "8px 6px", borderBottom: "1px solid rgba(0,0,0,0.06)", color: "#111" }}>{r.count}표</td>
+                  <td style={{ padding: "8px 6px", borderBottom: "1px solid rgba(0,0,0,0.06)", color: "#333" }}>
+                    {(r.reasons || []).filter(Boolean).join(", ") || "-"
+                    }
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <div style={{ color: "#555", marginTop: 8 }}>표시할 결과가 없습니다.</div>
+        )}
+      </div>
+
+      <div style={{ marginTop: 12, padding: 10, borderRadius: 12, background: "rgba(0,0,0,0.04)" }}>
+        {success ? (
+          <div style={{ fontWeight: 900, color: "#111" }}>
+            사냥꾼 색출 성공!
+            {props.result.revealedHunterName ? (
+              <span>
+                {" "}
+                (<b>{props.result.revealedHunterName}</b>)
+              </span>
+            ) : null}
+          </div>
+        ) : (
+          <div style={{ fontWeight: 900, color: "#111" }}>사냥꾼 색출 실패! GAME OVER ..</div>
+        )}
+
+        {success && hunterImg ? (
+          <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "center" }}>
+            <div
+              style={{
+                width: 84,
+                height: 84,
+                borderRadius: 16,
+                overflow: "hidden",
+                border: "1px solid rgba(0,0,0,0.10)",
+                background: "rgba(255,255,255,0.8)",
+              }}
+            >
+              <img src={hunterImg} alt="hunter" style={{ width: "100%", height: "100%", imageRendering: "pixelated" as any }} />
+            </div>
+            <div style={{ color: "#333", lineHeight: 1.6 }}>
+              결과가 공개되었습니다.
+              <br />
+              진행자의 안내를 따라 다음 단계로 이동하세요.
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );

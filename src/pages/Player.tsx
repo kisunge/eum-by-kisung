@@ -17,20 +17,20 @@ type PublicGame = {
   };
   players: PublicPlayer[];
 
-  // ✅ (GAS/프론트에서 이미 추가했다면 사용 가능)
+  // (프론트/가스에서 이미 쓰고 있으면 그대로 사용)
   vote1Result?: {
     finalized: boolean;
     rows: { targetName: string; count: number; reasons: string[] }[];
     revealedHunterId?: string;
     revealedHunterName?: string;
-    success?: boolean; // 2표 이상 사냥꾼 색출 성공 여부
+    success?: boolean;
   };
   vote2Result?: {
     finalized: boolean;
     rows: { targetName: string; count: number; reasons: string[] }[];
     revealedHunterId?: string;
     revealedHunterName?: string;
-    success?: boolean; // 3표 이상 사냥꾼 색출 성공 여부
+    success?: boolean;
   };
 };
 
@@ -39,7 +39,7 @@ type Me = {
   name: string;
   alive: any;
   roleRevealed: any;
-  role: "king" | "hunter" | "animal";
+  role: "king" | "hunter" | "animal" | any; // ✅ 혹시 문자열이 다르게 와도 대응
   knownHunter?: null | { playerId: string; name: string };
   otherHunter?: null | { playerId: string; name: string };
 };
@@ -48,33 +48,33 @@ function isTrue(v: any) {
   return v === true || String(v).toLowerCase() === "true" || String(v) === "1";
 }
 
-function phaseLabelPlayer(phase: string) {
-  switch (phase) {
+// ✅ 비교는 항상 소문자 키로
+function phaseLabelPlayer(phaseKey: string) {
+  switch (phaseKey) {
     case "lobby":
       return "대기";
     case "hike":
       return "등산시작";
-    case "hikeEnd":
+    case "hikeend":
       return "등산종료";
-    case "vote1Intro":
+    case "vote1intro":
       return "1차투표(설명)";
     case "vote1":
       return "1차투표(진행)";
-    case "vote2Intro":
+    case "vote2intro":
       return "2차투표(설명)";
     case "vote2":
       return "2차투표(진행)";
-    case "endedHunters":
-      return "최종결과 확인";
-    case "endedAnimals":
+    case "endedhunters":
+    case "endedanimals":
       return "최종결과 확인";
     default:
-      return phase;
+      return phaseKey;
   }
 }
 
-function roleLabel(role: Me["role"]) {
-  switch (role) {
+function roleLabel(roleKey: string) {
+  switch (roleKey) {
     case "king":
       return "동물의 왕";
     case "hunter":
@@ -82,12 +82,13 @@ function roleLabel(role: Me["role"]) {
     case "animal":
       return "동물친구들";
     default:
-      return role;
+      return roleKey || "-";
   }
 }
 
-function aliveLabel(phase: string, alive: boolean) {
-  const canShow = phase === "hikeEnd" || phase.startsWith("vote") || phase.startsWith("ended");
+function aliveLabel(phaseKey: string, alive: boolean) {
+  const canShow =
+    phaseKey === "hikeend" || phaseKey.startsWith("vote") || phaseKey.startsWith("ended");
   if (!canShow) return "알 수 없음";
   return alive ? "생존" : "사망";
 }
@@ -112,17 +113,17 @@ function phaseSteps() {
   ];
 }
 
-function phaseIndex(phase: string) {
-  if (phase === "vote1Intro") return 1;
-  if (phase === "vote2Intro") return 2;
+function phaseIndex(phaseKey: string) {
+  if (phaseKey === "vote1intro") return 1;
+  if (phaseKey === "vote2intro") return 2;
 
-  if (phase === "hike") return 0;
-  if (phase.startsWith("vote1")) return 1;
-  if (phase.startsWith("vote2")) return 2;
-  if (phase.startsWith("ended")) return 3;
+  if (phaseKey === "hike") return 0;
+  if (phaseKey.startsWith("vote1")) return 1;
+  if (phaseKey.startsWith("vote2")) return 2;
+  if (phaseKey.startsWith("ended")) return 3;
 
-  if (phase === "lobby") return -1;
-  if (phase === "hikeEnd") return 0;
+  if (phaseKey === "lobby") return -1;
+  if (phaseKey === "hikeend") return 0;
 
   return -1;
 }
@@ -142,16 +143,14 @@ export default function Player() {
   const [voteTarget, setVoteTarget] = useState("");
   const [voteReason, setVoteReason] = useState("");
 
-  // ✅ status/role 정규화(공백/대소문자 이슈 대응)
-  const phase = useMemo(() => String(game?.status ?? "lobby").trim(), [game?.status]);
-  const myRole = useMemo(() => String(me?.role ?? "").trim().toLowerCase(), [me?.role]);
+  // ✅ 정규화된 키만 사용
+  const phaseKey = useMemo(() => String(game?.status ?? "lobby").trim().toLowerCase(), [game?.status]);
+  const roleKey = useMemo(() => String(me?.role ?? "").trim().toLowerCase(), [me?.role]);
 
   const alive = useMemo(() => (me ? isTrue(me.alive) : false), [me]);
 
-  // ✅ GitHub Pages 하위 경로 대응
   const splashUrl = `${import.meta.env.BASE_URL}ui/splash.png`;
 
-  // ✅ START 버튼 히트박스 좌표(페피님이 조정)
   const START_BTN = {
     left: "23%",
     top: "75%",
@@ -162,17 +161,15 @@ export default function Player() {
   // ✅ 진행자 카카오톡 링크
   const KAKAO_URL = "http://qr.kakao.com/talk/uP76SnGIaCCpwgnfKQu0LTjQsvQ-";
 
-  // ✅ 프로필 캐릭터(p1~p7)
   const myAvatarUrl = useMemo(() => {
     if (!me) return "";
     return `${import.meta.env.BASE_URL}avatars/${me.playerId}.png`;
   }, [me]);
 
-  // ✅ 이름이 비어오는 경우 players에서 fallback
   const myDisplayName = useMemo(() => {
-    if (me?.name && me.name.trim()) return me.name.trim();
+    if (me?.name && String(me.name).trim()) return String(me.name).trim();
     if (!me || !game) return "-";
-    const p = game.players?.find((x) => x.playerId === me.playerId);
+    const p = (game.players || []).find((x) => x.playerId === me.playerId);
     return (p?.name || "-").trim() || "-";
   }, [me, game]);
 
@@ -260,7 +257,6 @@ export default function Player() {
       <div style={styles.fullBlackCenter}>
         <div style={{ position: "relative", width: "min(980px, 100%)" }}>
           <img src={splashUrl} alt="splash" style={styles.splashImg} />
-
           <button
             onClick={() => setUiStage("login")}
             aria-label="START"
@@ -340,14 +336,16 @@ export default function Player() {
   // ============================================================
   // GAME UI
   // ============================================================
-  const stepIdx = phaseIndex(phase);
-  const showVote1 = alive && phase === "vote1";
-  const showVote2 = alive && phase === "vote2";
-  const showVoteIntro = phase === "vote1Intro" || phase === "vote2Intro";
+  const stepIdx = phaseIndex(phaseKey);
+  const showVote1 = alive && phaseKey === "vote1";
+  const showVote2 = alive && phaseKey === "vote2";
+  const showVoteIntro = phaseKey === "vote1intro" || phaseKey === "vote2intro";
 
-  // ✅ 핵심: 행동정보는 "등산시작(hike)"일 때만 노출
-  // ✅ role은 정규화된 myRole로 비교
-  const showActionInfo = phase === "hike" && (myRole === "hunter" || myRole === "king");
+  // ✅ 핵심 수정
+  // - 행동정보: "등산시작(hike)"일 때만
+  // - 사냥꾼/왕 모두 동일 적용 (p2/p3/p6 모두)
+  const isHunterOrKing = roleKey === "hunter" || roleKey === "king";
+  const showActionInfo = phaseKey === "hike" && isHunterOrKing;
 
   return (
     <div style={styles.page}>
@@ -356,7 +354,7 @@ export default function Player() {
           <div style={{ color: "#111", fontWeight: 800 }}>게임 정보를 불러오는 중...</div>
         ) : (
           <>
-            {/* 1) 프로필 영역 */}
+            {/* 1) 프로필 */}
             <section style={styles.card}>
               <div style={styles.cardTitle}>프로필</div>
 
@@ -377,26 +375,21 @@ export default function Player() {
                   <div style={{ fontSize: 20, fontWeight: 900, color: "#111" }}>{myDisplayName}</div>
 
                   <div style={{ marginTop: 6, display: "flex", gap: 10, flexWrap: "wrap" }}>
-                    <Badge label={`역할: ${roleLabel(me.role)}`} />
-                    <Badge label={`생존: ${aliveLabel(phase, alive)}`} />
+                    <Badge label={`역할: ${roleLabel(roleKey)}`} />
+                    <Badge label={`생존: ${aliveLabel(phaseKey, alive)}`} />
                   </div>
 
-                  {myRole === "king" && me.knownHunter ? (
+                  {roleKey === "king" && me.knownHunter ? (
                     <div style={{ marginTop: 10, fontSize: 13, color: "#444" }}>
                       내가 아는 사냥꾼 1명: <b>{me.knownHunter.name}</b>
                     </div>
                   ) : null}
 
-                  {myRole === "hunter" && me.otherHunter ? (
+                  {roleKey === "hunter" && me.otherHunter ? (
                     <div style={{ marginTop: 10, fontSize: 13, color: "#444" }}>
                       다른 사냥꾼: <b>{me.otherHunter.name}</b>
                     </div>
                   ) : null}
-
-                  {/* ✅ 임시 디버그(원하면 지워도 됨) */}
-                  {/* <div style={{ marginTop: 6, fontSize: 12, color: "#666" }}>
-                    debug: phase="{phase}" / role="{myRole}"
-                  </div> */}
                 </div>
               </div>
             </section>
@@ -407,7 +400,7 @@ export default function Player() {
 
               <div style={{ marginTop: 10 }}>
                 <div style={{ fontSize: 14, color: "#555" }}>
-                  현재 단계: <b style={{ color: "#111" }}>{phaseLabelPlayer(phase)}</b>
+                  현재 단계: <b style={{ color: "#111" }}>{phaseLabelPlayer(phaseKey)}</b>
                   {game?.endedWinner ? <span> / 승자: {game.endedWinner}</span> : null}
                 </div>
 
@@ -446,8 +439,8 @@ export default function Player() {
                 <InfoRow
                   label="사망자"
                   value={
-                    phase === "hikeEnd" || phase.startsWith("vote") || phase.startsWith("ended")
-                      ? game.revealed.killedPlayerNames?.length
+                    phaseKey === "hikeend" || phaseKey.startsWith("vote") || phaseKey.startsWith("ended")
+                      ? (game.revealed.killedPlayerNames || []).length
                         ? "있음"
                         : "없음"
                       : game.revealed.killedExists
@@ -458,7 +451,7 @@ export default function Player() {
                 <InfoRow
                   label="사망자 목록"
                   value={
-                    phase === "hikeEnd" || phase.startsWith("vote") || phase.startsWith("ended")
+                    phaseKey === "hikeend" || phaseKey.startsWith("vote") || phaseKey.startsWith("ended")
                       ? (game.revealed.killedPlayerNames || []).join(", ") || "-"
                       : "-"
                   }
@@ -471,13 +464,13 @@ export default function Player() {
               </div>
             </section>
 
-            {/* 4) 행동 정보 (등산시작일 때만 + 사냥꾼/왕만) */}
+            {/* 4) 행동 정보 (hike에서만 + hunter/king만) */}
             {showActionInfo && (
               <section style={styles.card}>
                 <div style={styles.cardTitle}>행동 정보</div>
 
                 <div style={{ marginTop: 10, color: "#333", lineHeight: 1.7 }}>
-                  {myRole === "hunter" ? (
+                  {roleKey === "hunter" ? (
                     <>
                       <div style={{ fontWeight: 900, color: "#111" }}>사냥꾼 안내</div>
                       <div style={{ marginTop: 6 }}>
@@ -486,7 +479,7 @@ export default function Player() {
                     </>
                   ) : null}
 
-                  {myRole === "king" ? (
+                  {roleKey === "king" ? (
                     <>
                       <div style={{ fontWeight: 900, color: "#111" }}>동물의 왕 안내</div>
                       <div style={{ marginTop: 6 }}>
@@ -495,7 +488,7 @@ export default function Player() {
                     </>
                   ) : null}
 
-                  {/* ✅ 공통 버튼: 사냥꾼/왕 모두에게 동일 노출 */}
+                  {/* ✅ 공통 버튼: p2/p3/p6 모두에게 동일 표시 */}
                   <div style={{ marginTop: 12 }}>
                     <a href={KAKAO_URL} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>
                       <button style={styles.primaryBtn}>진행자의 카톡으로 가기</button>
@@ -505,18 +498,16 @@ export default function Player() {
               </section>
             )}
 
-            {/* 투표 섹션 */}
+            {/* 투표 */}
             <section style={styles.card}>
               <div style={styles.cardTitle}>투표</div>
 
               <div style={{ marginTop: 10 }}>
-                {!alive && (phase === "hikeEnd" || phase.startsWith("vote") || phase.startsWith("ended")) ? (
+                {!alive && (phaseKey === "hikeend" || phaseKey.startsWith("vote") || phaseKey.startsWith("ended")) ? (
                   <div style={{ color: "#555" }}>사망자는 투표할 수 없어요.</div>
                 ) : null}
 
-                {showVoteIntro ? (
-                  <div style={{ color: "#555" }}>진행자가 투표 설명 중입니다. 잠시만 기다려주세요.</div>
-                ) : null}
+                {showVoteIntro ? <div style={{ color: "#555" }}>진행자가 투표 설명 중입니다. 잠시만 기다려주세요.</div> : null}
 
                 {showVote1 ? (
                   <VoteBox
@@ -546,27 +537,14 @@ export default function Player() {
               </div>
             </section>
 
-            {/* ✅ (선택) 투표 결과 박스: 게임/프론트에서 vote1Result/vote2Result를 내려주는 경우 표시 */}
+            {/* (선택) 투표 결과 */}
             {(game.vote1Result?.finalized || game.vote2Result?.finalized) && (
               <section style={styles.card}>
                 <div style={styles.cardTitle}>투표 결과</div>
 
                 <div style={{ marginTop: 10, display: "grid", gap: 12 }}>
-                  {game.vote1Result?.finalized ? (
-                    <VoteResultBlock
-                      roundTitle="1차 투표 결과"
-                      result={game.vote1Result}
-                      hunterImageId={game.vote1Result.revealedHunterId}
-                    />
-                  ) : null}
-
-                  {game.vote2Result?.finalized ? (
-                    <VoteResultBlock
-                      roundTitle="2차 투표 결과"
-                      result={game.vote2Result}
-                      hunterImageId={game.vote2Result.revealedHunterId}
-                    />
-                  ) : null}
+                  {game.vote1Result?.finalized ? <VoteResultBlock roundTitle="1차 투표 결과" result={game.vote1Result} /> : null}
+                  {game.vote2Result?.finalized ? <VoteResultBlock roundTitle="2차 투표 결과" result={game.vote2Result} /> : null}
                 </div>
               </section>
             )}
@@ -726,22 +704,12 @@ function VoteBox(props: {
   );
 }
 
-/** ✅ 투표 결과 표시 블록(누가 누구 찍었는지 비공개: 득표자/득표수/사유만) */
 function VoteResultBlock(props: {
   roundTitle: string;
-  result: { rows: { targetName: string; count: number; reasons: string[] }[]; revealedHunterName?: string; success?: boolean };
-  hunterImageId?: string;
+  result: { rows: { targetName: string; count: number; reasons: string[] }[]; success?: boolean; revealedHunterName?: string };
 }) {
   const rows = props.result.rows || [];
   const success = !!props.result.success;
-
-  const hunterImg = useMemo(() => {
-    if (!props.hunterImageId) return "";
-    const id = String(props.hunterImageId).trim().toLowerCase();
-    if (id === "p2") return `${import.meta.env.BASE_URL}avatars/p2_hunter.png`;
-    if (id === "p3") return `${import.meta.env.BASE_URL}avatars/p3_hunter.png`;
-    return "";
-  }, [props.hunterImageId]);
 
   return (
     <div style={{ border: "1px solid rgba(0,0,0,0.10)", borderRadius: 14, padding: 12, background: "rgba(255,255,255,0.65)" }}>
@@ -765,8 +733,7 @@ function VoteResultBlock(props: {
                   </td>
                   <td style={{ padding: "8px 6px", borderBottom: "1px solid rgba(0,0,0,0.06)", color: "#111" }}>{r.count}표</td>
                   <td style={{ padding: "8px 6px", borderBottom: "1px solid rgba(0,0,0,0.06)", color: "#333" }}>
-                    {(r.reasons || []).filter(Boolean).join(", ") || "-"
-                    }
+                    {(r.reasons || []).filter(Boolean).join(", ") || "-"}
                   </td>
                 </tr>
               ))}
@@ -780,39 +747,11 @@ function VoteResultBlock(props: {
       <div style={{ marginTop: 12, padding: 10, borderRadius: 12, background: "rgba(0,0,0,0.04)" }}>
         {success ? (
           <div style={{ fontWeight: 900, color: "#111" }}>
-            사냥꾼 색출 성공!
-            {props.result.revealedHunterName ? (
-              <span>
-                {" "}
-                (<b>{props.result.revealedHunterName}</b>)
-              </span>
-            ) : null}
+            사냥꾼 색출 성공! {props.result.revealedHunterName ? <span>(<b>{props.result.revealedHunterName}</b>)</span> : null}
           </div>
         ) : (
           <div style={{ fontWeight: 900, color: "#111" }}>사냥꾼 색출 실패! GAME OVER ..</div>
         )}
-
-        {success && hunterImg ? (
-          <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "center" }}>
-            <div
-              style={{
-                width: 84,
-                height: 84,
-                borderRadius: 16,
-                overflow: "hidden",
-                border: "1px solid rgba(0,0,0,0.10)",
-                background: "rgba(255,255,255,0.8)",
-              }}
-            >
-              <img src={hunterImg} alt="hunter" style={{ width: "100%", height: "100%", imageRendering: "pixelated" as any }} />
-            </div>
-            <div style={{ color: "#333", lineHeight: 1.6 }}>
-              결과가 공개되었습니다.
-              <br />
-              진행자의 안내를 따라 다음 단계로 이동하세요.
-            </div>
-          </div>
-        ) : null}
       </div>
     </div>
   );
@@ -930,6 +869,7 @@ const styles: Record<string, any> = {
     fontWeight: 900,
     cursor: "pointer",
     color: "#111",
+    width: "100%",
   },
   secondaryBtn: {
     padding: "10px 12px",

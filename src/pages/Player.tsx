@@ -257,7 +257,7 @@ export default function Player() {
     return all.length >= 2;
   }, [vote1Block, vote2Block]);
 
-  const hunterProfileUrl = (pid: string) => `${import.meta.env.BASE_URL}ui/${String(pid).toLowerCase()}_hunter.png`;
+  const hunterProfileUrl = (pid: string) => `${import.meta.env.BASE_URL}avartar/${String(pid).toLowerCase()}_hunter.png`;
   const playerNameById = (pid: string) => (game?.players || []).find((p) => p.playerId === pid)?.name || pid;
 
   const doLogout = (msg?: string) => {

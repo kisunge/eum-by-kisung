@@ -5,37 +5,40 @@ type PublicPlayer = { playerId: string; name: string; alive: any; roleRevealed: 
 type ProtectionResult = "none" | "success" | "partial";
 
 type VoteSummaryRow = {
-  targetId: string;
-  targetName: string;
-  count: number;
-  reasons: string[];
+  targetId?: string;
+  targetName?: string;
+  count?: number;
+  reasons?: string[];
 };
 
-type VoteResults = {
-  vote1?: { rows: VoteSummaryRow[]; outcome: string; revealedHunters: string[] };
-  vote2?: { rows: VoteSummaryRow[]; outcome: string; revealedHunters: string[] };
-};
+type VoteResultsPayload =
+  | {
+      vote1?: { rows?: VoteSummaryRow[]; outcome?: string; revealedHunters?: string[] };
+      vote2?: { rows?: VoteSummaryRow[]; outcome?: string; revealedHunters?: string[] };
+    }
+  | undefined;
 
 type PublicGame = {
   status: string;
   endedWinner: string;
-  vote1RevealedHunterId: string;
-  revealedHunterNames?: string[];
+  vote1RevealedHunterId: string; // legacy
+  revealedHunterNames?: string[]; // host용일 수 있음
   revealed: {
     killedExists: boolean;
+    // 서버가 killedPlayerNames 또는 killedPlayerIds 둘 중 하나로 내려줄 수 있어서 둘 다 대응
+    killedPlayerNames?: string[];
     killedPlayerIds?: string[];
-    killedPlayerNames: string[];
     protectionAttempted: boolean;
     protectionResult: ProtectionResult;
   };
   players: PublicPlayer[];
 
-  // ✅ GAS에서 내려주는 공용 필드
-  voteResults?: VoteResults;
-
-  // ✅ 레거시 호환(있으면 사용 가능)
+  // (구버전/프론트에서 이미 쓰고 있던 형태가 있으면 유지)
   vote1Result?: any;
   vote2Result?: any;
+
+  // (신규) GAS에서 내려주는 공용 투표 결과
+  voteResults?: VoteResultsPayload;
 };
 
 type Me = {
@@ -130,6 +133,15 @@ function phaseIndex(phaseKey: string) {
   return -1;
 }
 
+function normalizeRows(input: any): VoteSummaryRow[] {
+  if (!input) return [];
+  // 1) voteResults.vote1.rows 형태
+  if (Array.isArray(input)) return input;
+  if (Array.isArray(input?.rows)) return input.rows;
+  // 2) vote1Result/vote2Result가 rows 없이 바로 내려오는 경우 (방어)
+  return [];
+}
+
 export default function Player() {
   type UiStage = "splash" | "login" | "game";
   const [uiStage, setUiStage] = useState<UiStage>("splash");
@@ -150,9 +162,17 @@ export default function Player() {
 
   const splashUrl = `${import.meta.env.BASE_URL}ui/splash.png`;
 
-  const START_BTN = { left: "23%", top: "75%", width: "60%", height: "20%" };
+  const START_BTN = {
+    left: "23%",
+    top: "75%",
+    width: "60%",
+    height: "20%",
+  };
 
   const KAKAO_URL = "http://qr.kakao.com/talk/uP76SnGIaCCpwgnfKQu0LTjQsvQ-";
+
+  const RESULT_ANIMAL_WIN = `${import.meta.env.BASE_URL}ui/result_animal_win.png`;
+  const RESULT_HUNTER_WIN = `${import.meta.env.BASE_URL}ui/result_hunter_win.png`;
 
   const phaseKey = useMemo(() => String(game?.status ?? "lobby").trim().toLowerCase(), [game?.status]);
   const roleKey = useMemo(() => String(me?.role ?? "").trim().toLowerCase(), [me?.role]);
@@ -171,31 +191,37 @@ export default function Player() {
     return (p?.name || "-").trim() || "-";
   }, [me, game]);
 
-  // ✅ killedPlayerNames 방어: GAS가 names를 못 주는 경우 ids + players로 조립
-  const killedNamesSafe = useMemo(() => {
+  // ✅ killed 이름 방어적으로 계산 (names가 없고 ids만 내려오면 players로 매핑)
+  const killedNames = useMemo(() => {
     if (!game) return [];
-    const names = (game.revealed?.killedPlayerNames || []).filter(Boolean);
-    if (names.length) return names;
+    const names = (game.revealed as any)?.killedPlayerNames;
+    if (Array.isArray(names) && names.length) return names.map((s) => String(s).trim()).filter(Boolean);
 
-    const ids = (game.revealed?.killedPlayerIds || []).filter(Boolean);
-    if (!ids.length) return [];
-
-    const byId = new Map((game.players || []).map((p) => [p.playerId, p.name]));
-    return ids.map((id) => byId.get(id) || id);
+    const ids = (game.revealed as any)?.killedPlayerIds;
+    if (Array.isArray(ids) && ids.length) {
+      const byId = new Map((game.players || []).map((p) => [p.playerId, p.name]));
+      return ids.map((id: string) => byId.get(String(id)) || String(id)).filter(Boolean);
+    }
+    return [];
   }, [game]);
 
-  // ✅ voteResults 방어: 레거시로 내려오는 경우도 흡수
-  const voteResultsSafe: VoteResults = useMemo(() => {
-    const vr = game?.voteResults;
-    if (vr && (vr.vote1 || vr.vote2)) return vr;
+  // ✅ vote results (신규/구버전 둘 다 대응)
+  const voteResults = useMemo(() => {
+    const vr = (game as any)?.voteResults as VoteResultsPayload;
+    // fallback: 예전 필드가 있으면 거기서라도
+    const v1Fallback = (game as any)?.vote1Result;
+    const v2Fallback = (game as any)?.vote2Result;
 
-    // 레거시 호환
-    const v1 = game?.vote1Result;
-    const v2 = game?.vote2Result;
-    const out: VoteResults = {};
-    if (v1) out.vote1 = v1;
-    if (v2) out.vote2 = v2;
-    return out;
+    const v1 = vr?.vote1 ?? v1Fallback;
+    const v2 = vr?.vote2 ?? v2Fallback;
+
+    const vote1Rows = normalizeRows(v1);
+    const vote2Rows = normalizeRows(v2);
+
+    const vote1Outcome = String(vr?.vote1?.outcome ?? v1Fallback?.outcome ?? "").trim();
+    const vote2Outcome = String(vr?.vote2?.outcome ?? v2Fallback?.outcome ?? "").trim();
+
+    return { vote1Rows, vote2Rows, vote1Outcome, vote2Outcome };
   }, [game]);
 
   async function login() {
@@ -214,6 +240,7 @@ export default function Player() {
       setMe(data.me);
       setGame(data.game);
       setPassword("");
+
       setUiStage("game");
     } catch (e: any) {
       console.error(e);
@@ -259,8 +286,7 @@ export default function Player() {
 
     const loop = async () => {
       clear();
-      const visible = document.visibilityState === "visible";
-      if (!visible) return;
+      if (document.visibilityState !== "visible") return;
       await refreshOnce();
       timerRef.current = window.setTimeout(loop, 5000);
     };
@@ -273,10 +299,7 @@ export default function Player() {
       }
     };
 
-    const onFocus = () => {
-      refreshOnce().finally(() => loop());
-    };
-
+    const onFocus = () => refreshOnce().finally(() => loop());
     const onOnline = () => {
       setNetState({ ok: true, msg: "" });
       refreshOnce().finally(() => loop());
@@ -331,9 +354,7 @@ export default function Player() {
     await refreshOnce();
   }
 
-  // ============================================================
   // SPLASH
-  // ============================================================
   if (uiStage === "splash") {
     return (
       <div style={styles.fullBlackCenter}>
@@ -358,9 +379,7 @@ export default function Player() {
     );
   }
 
-  // ============================================================
-  // LOGIN POPUP
-  // ============================================================
+  // LOGIN
   if (uiStage === "login") {
     return (
       <div style={styles.fullBlackCenter}>
@@ -410,24 +429,21 @@ export default function Player() {
     );
   }
 
-  // ============================================================
   // GAME UI
-  // ============================================================
   const stepIdx = phaseIndex(phaseKey);
 
   const showVote1 = alive && phaseKey === "vote1";
   const showVote2 = alive && phaseKey === "vote2";
   const showVoteIntro = phaseKey === "vote1intro" || phaseKey === "vote2intro";
 
-  // ✅ 행동정보는 "hike"에서만 + hunter/king만
   const isHunterOrKing = roleKey === "hunter" || roleKey === "king";
   const showActionInfo = phaseKey === "hike" && isHunterOrKing;
 
-  // ✅ 투표 결과는 “수동 완료처리” 후 rows가 생기면 모든 플레이어에게 표시
-  const vote1Rows = (voteResultsSafe.vote1?.rows || []) as VoteSummaryRow[];
-  const vote2Rows = (voteResultsSafe.vote2?.rows || []) as VoteSummaryRow[];
+  // ✅ 결과 카드 표시 조건
+  const isEndedHunters = phaseKey === "endedhunters";
+  const isEndedAnimals = phaseKey === "endedanimals";
 
-  const showVoteResultsBox = vote1Rows.length > 0 || vote2Rows.length > 0;
+  const hasVote2Result = (voteResults.vote2Rows || []).length > 0;
 
   return (
     <div style={styles.page}>
@@ -499,7 +515,7 @@ export default function Player() {
               </div>
             </section>
 
-            {/* 진행 정보 */}
+            {/* 게임 진행 정보 */}
             <section style={styles.card}>
               <div style={styles.cardTitle}>게임 진행 정보</div>
 
@@ -508,7 +524,7 @@ export default function Player() {
                   label="사망자"
                   value={
                     phaseKey === "hikeend" || phaseKey.startsWith("vote") || phaseKey.startsWith("ended")
-                      ? killedNamesSafe.length
+                      ? killedNames.length
                         ? "있음"
                         : "없음"
                       : game.revealed.killedExists
@@ -518,11 +534,7 @@ export default function Player() {
                 />
                 <InfoRow
                   label="사망자 목록"
-                  value={
-                    phaseKey === "hikeend" || phaseKey.startsWith("vote") || phaseKey.startsWith("ended")
-                      ? killedNamesSafe.join(", ") || "-"
-                      : "-"
-                  }
+                  value={phaseKey === "hikeend" || phaseKey.startsWith("vote") || phaseKey.startsWith("ended") ? killedNames.join(", ") || "-" : "-"}
                 />
                 <InfoRow label="보호 시도" value={protectionAttemptText(!!game.revealed.protectionAttempted)} />
                 <InfoRow
@@ -532,7 +544,7 @@ export default function Player() {
               </div>
             </section>
 
-            {/* ✅ 행동 정보 (hike에서만) */}
+            {/* 행동 정보 (hike에서만) */}
             {showActionInfo ? (
               <section style={styles.card}>
                 <div style={styles.cardTitle}>행동 정보</div>
@@ -565,36 +577,39 @@ export default function Player() {
               </section>
             ) : null}
 
-            {/* ✅ 투표 결과 (수동 완료처리 후, 모든 플레이어에게 표시) */}
-            {showVoteResultsBox ? (
+            {/* ✅ 게임 결과 이미지/문구 */}
+            {(isEndedHunters || isEndedAnimals) && (
               <section style={styles.card}>
-                <div style={styles.cardTitle}>투표 결과</div>
+                <div style={styles.cardTitle}>게임 결과</div>
 
-                {/* 1차 */}
-                {vote1Rows.length > 0 ? (
-                  <VoteResultPanel
-                    round={1}
-                    rows={vote1Rows}
-                    outcome={String(voteResultsSafe.vote1?.outcome || "")}
-                    revealedHunterIds={(voteResultsSafe.vote1?.revealedHunters || []).filter(Boolean)}
-                    players={game.players}
-                  />
+                {isEndedHunters ? (
+                  <>
+                    <div style={{ marginTop: 10, fontWeight: 900, color: "#111", fontSize: 16 }}>사냥꾼 색출 실패! GAME OVER ..</div>
+                    <div style={{ marginTop: 12 }}>
+                      <img
+                        src={RESULT_HUNTER_WIN}
+                        alt="result_hunter_win"
+                        style={{ width: "100%", height: "auto", borderRadius: 14, border: "1px solid rgba(0,0,0,0.10)" }}
+                      />
+                    </div>
+                  </>
                 ) : null}
 
-                {/* 2차 */}
-                {vote2Rows.length > 0 ? (
-                  <div style={{ marginTop: 14 }}>
-                    <VoteResultPanel
-                      round={2}
-                      rows={vote2Rows}
-                      outcome={String(voteResultsSafe.vote2?.outcome || "")}
-                      revealedHunterIds={(voteResultsSafe.vote2?.revealedHunters || []).filter(Boolean)}
-                      players={game.players}
-                    />
-                  </div>
+                {/* ✅ “두번째 투표결과 두명의 사냥꾼을 모두 색출” 조건: endedAnimals && vote2 결과가 존재 */}
+                {isEndedAnimals && hasVote2Result ? (
+                  <>
+                    <div style={{ marginTop: 10, fontWeight: 900, color: "#111", fontSize: 16 }}>사냥꾼 색출 성공! 동물들 승리!</div>
+                    <div style={{ marginTop: 12 }}>
+                      <img
+                        src={RESULT_ANIMAL_WIN}
+                        alt="result_animal_win"
+                        style={{ width: "100%", height: "auto", borderRadius: 14, border: "1px solid rgba(0,0,0,0.10)" }}
+                      />
+                    </div>
+                  </>
                 ) : null}
               </section>
-            ) : null}
+            )}
 
             {/* 투표 */}
             <section style={styles.card}>
@@ -659,86 +674,6 @@ export default function Player() {
           </>
         )}
       </div>
-    </div>
-  );
-}
-
-function VoteResultPanel(props: {
-  round: 1 | 2;
-  rows: VoteSummaryRow[];
-  outcome: string;
-  revealedHunterIds: string[];
-  players: PublicPlayer[];
-}) {
-  const base = import.meta.env.BASE_URL;
-
-  const byId = useMemo(() => {
-    const m = new Map<string, string>();
-    (props.players || []).forEach((p) => m.set(p.playerId, p.name));
-    return m;
-  }, [props.players]);
-
-  const successText = () => {
-    // 1차: success_one / success_both / fail
-    // 2차: success / fail
-    if (props.round === 1) {
-      if (props.outcome === "success_one" || props.outcome === "success_both") return "사냥꾼 색출 성공!";
-      if (props.outcome === "fail") return "사냥꾼 색출 실패! GAME OVER ..";
-      return "";
-    } else {
-      if (props.outcome === "success") return "사냥꾼 색출 성공!";
-      if (props.outcome === "fail") return "사냥꾼 색출 실패! GAME OVER ..";
-      return "";
-    }
-  };
-
-  const hunterBlocks =
-    props.revealedHunterIds && props.revealedHunterIds.length
-      ? props.revealedHunterIds.map((hid) => ({
-          id: hid,
-          name: byId.get(hid) || hid,
-          img: `${base}avatars/${hid}_hunter.png`, // ✅ p2_hunter.png / p3_hunter.png 형태
-        }))
-      : [];
-
-  return (
-    <div>
-      <div style={{ fontWeight: 900, color: "#111" }}>{props.round}차 득표 결과</div>
-
-      <div style={{ marginTop: 10, border: "1px solid rgba(0,0,0,0.10)", borderRadius: 12, overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 90px 1.2fr", background: "rgba(0,0,0,0.04)", padding: 10, fontWeight: 900 }}>
-          <div>득표자</div>
-          <div style={{ textAlign: "center" }}>득표수</div>
-          <div>사유</div>
-        </div>
-
-        {props.rows.map((r) => (
-          <div key={r.targetId} style={{ display: "grid", gridTemplateColumns: "1fr 90px 1.2fr", padding: 10, borderTop: "1px solid rgba(0,0,0,0.08)" }}>
-            <div style={{ fontWeight: 900, color: "#111" }}>{r.targetName}</div>
-            <div style={{ textAlign: "center", fontWeight: 900, color: "#111" }}>{r.count}표</div>
-            <div style={{ color: "#111" }}>{(r.reasons || []).join(", ") || "-"}</div>
-          </div>
-        ))}
-      </div>
-
-      {successText() ? (
-        <div style={{ marginTop: 12, padding: 12, borderRadius: 12, border: "1px solid rgba(0,0,0,0.10)", background: "rgba(255,255,255,0.75)" }}>
-          <div style={{ fontWeight: 900, color: "#111" }}>{successText()}</div>
-
-          {hunterBlocks.length ? (
-            <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
-              {hunterBlocks.map((h) => (
-                <div key={h.id} style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                  <div style={{ width: 56, height: 56, borderRadius: 12, overflow: "hidden", border: "1px solid rgba(0,0,0,0.10)", background: "rgba(255,255,255,0.9)" }}>
-                    <img src={h.img} alt={h.id} style={{ width: "100%", height: "100%", imageRendering: "pixelated" as any }} />
-                  </div>
-                  <div style={{ fontWeight: 900, color: "#111" }}>{h.name}</div>
-                </div>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -852,7 +787,13 @@ function VoteBox(props: {
           ))}
         </select>
 
-        <textarea placeholder="투표 사유(필수)" value={props.reason} onChange={(e) => props.setReason(e.target.value)} rows={4} style={styles.textarea} />
+        <textarea
+          placeholder="투표 사유(필수)"
+          value={props.reason}
+          onChange={(e) => props.setReason(e.target.value)}
+          rows={4}
+          style={styles.textarea}
+        />
 
         <button onClick={props.onSubmit} disabled={!canSubmit} style={{ ...styles.primaryBtn, opacity: canSubmit ? 1 : 0.55 }}>
           제출

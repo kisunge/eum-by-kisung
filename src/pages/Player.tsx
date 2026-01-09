@@ -452,7 +452,7 @@ export default function Player() {
                   </div>
                   <div style={{ marginBottom: 10 }}>
                     <a href={KAKAO_LINK} target="_blank" rel="noreferrer">
-                      <button>진행자 카카오톡 열기</button>
+                      <button>진행자 카톡 열기</button>
                     </a>
                   </div>
                 </>
@@ -466,8 +466,8 @@ export default function Player() {
                   </div>
                   <div style={{ marginBottom: 10 }}>
                     <a href={KAKAO_LINK} target="_blank" rel="noreferrer">
-                      <button>진행자 카카오톡 열기</button>
-                    </a>      
+                      <button>진행자 카톡 열기</button>
+                     </a>      
                   </div>
                 </>
               ) : null}

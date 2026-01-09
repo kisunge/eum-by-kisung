@@ -32,11 +32,11 @@ type PublicGame = {
   };
   players: PublicPlayer[];
 
-  // (구버전 fallback)
+  // 구버전 fallback
   vote1Result?: any;
   vote2Result?: any;
 
-  // (신규) GAS에서 내려주는 공용 투표 결과
+  // 신규: GAS 공용 결과
   voteResults?: VoteResultsPayload;
 };
 
@@ -139,6 +139,11 @@ function normalizeRows(input: any): VoteSummaryRow[] {
   return [];
 }
 
+function normalizeIds(input: any): string[] {
+  if (Array.isArray(input)) return input.map((x) => String(x).trim()).filter(Boolean);
+  return [];
+}
+
 function safeStr(v: any) {
   return String(v ?? "").trim();
 }
@@ -163,12 +168,7 @@ export default function Player() {
 
   const splashUrl = `${import.meta.env.BASE_URL}ui/splash.png`;
 
-  const START_BTN = {
-    left: "23%",
-    top: "75%",
-    width: "60%",
-    height: "20%",
-  };
+  const START_BTN = { left: "23%", top: "75%", width: "60%", height: "20%" };
 
   const KAKAO_URL = "http://qr.kakao.com/talk/uP76SnGIaCCpwgnfKQu0LTjQsvQ-";
 
@@ -192,7 +192,6 @@ export default function Player() {
     return (p?.name || "-").trim() || "-";
   }, [me, game]);
 
-  // ✅ killed 이름 방어적으로 계산 (names가 없고 ids만 내려오면 players로 매핑)
   const killedNames = useMemo(() => {
     if (!game) return [];
     const names = (game.revealed as any)?.killedPlayerNames;
@@ -206,7 +205,7 @@ export default function Player() {
     return [];
   }, [game]);
 
-  // ✅ vote results (신규/구버전 둘 다 대응)
+  // ✅ vote results: rows + outcome + revealedHunters(중요!)
   const voteResults = useMemo(() => {
     const vr = (game as any)?.voteResults as VoteResultsPayload;
     const v1Fallback = (game as any)?.vote1Result;
@@ -221,7 +220,11 @@ export default function Player() {
     const vote1Outcome = safeStr(vr?.vote1?.outcome ?? v1Fallback?.outcome);
     const vote2Outcome = safeStr(vr?.vote2?.outcome ?? v2Fallback?.outcome);
 
-    return { vote1Rows, vote2Rows, vote1Outcome, vote2Outcome };
+    // 🔥 여기 추가: 색출된 사냥꾼 목록
+    const vote1RevealedHunters = normalizeIds(vr?.vote1?.revealedHunters ?? v1Fallback?.revealedHunters);
+    const vote2RevealedHunters = normalizeIds(vr?.vote2?.revealedHunters ?? v2Fallback?.revealedHunters);
+
+    return { vote1Rows, vote2Rows, vote1Outcome, vote2Outcome, vote1RevealedHunters, vote2RevealedHunters };
   }, [game]);
 
   async function login() {
@@ -442,16 +445,24 @@ export default function Player() {
   const isEndedHunters = phaseKey === "endedhunters";
   const isEndedAnimals = phaseKey === "endedanimals";
 
-  // ✅ 투표 결과 표 표시 조건
-  // - 1차 결과: hostFinalizeVote1 이후 (vote2Intro/vote2/ended*) 에서 표시
+  // ✅ 결과 박스 표시 조건 (1차는 2차 설명/진행/종료부터, 2차는 종료에서)
   const showVote1ResultBox =
-    (voteResults.vote1Rows || []).length > 0 && (phaseKey === "vote2intro" || phaseKey.startsWith("vote2") || phaseKey.startsWith("ended"));
+    (voteResults.vote1Rows || []).length > 0 &&
+    (phaseKey === "vote2intro" || phaseKey.startsWith("vote2") || phaseKey.startsWith("ended"));
 
-  // - 2차 결과: hostFinalizeVote2 이후 ended*에서 표시
   const showVote2ResultBox = (voteResults.vote2Rows || []).length > 0 && phaseKey.startsWith("ended");
 
-  // ✅ “두번째 투표결과 두명의 사냥꾼을 모두 색출” 화면용 조건은 endedAnimals + 2차 결과가 존재할 때
+  // ✅ endedAnimals + vote2Rows 존재 = (보통) 2차로 최종 색출 성공 연출
   const showAnimalWinImgFromVote2 = isEndedAnimals && (voteResults.vote2Rows || []).length > 0;
+
+  const byIdName = useMemo(() => {
+    const m = new Map<string, string>();
+    (game?.players || []).forEach((p) => m.set(p.playerId, p.name));
+    return m;
+  }, [game]);
+
+  const hunterImageUrl = (pid: string) => `${import.meta.env.BASE_URL}ui/${pid}_hunter.png`;
+  const hunterName = (pid: string) => byIdName.get(pid) || pid;
 
   return (
     <div style={styles.page}>
@@ -585,26 +596,65 @@ export default function Player() {
               </section>
             ) : null}
 
-            {/* ✅ 투표 결과 박스(표) - 이게 빠져있어서 1차 이후에 안 뜬 거였음 */}
+            {/* ✅ 1차 투표 결과 박스 + 색출된 사냥꾼 이미지 표시 */}
             {showVote1ResultBox ? (
               <section style={styles.card}>
                 <div style={styles.cardTitle}>1차 투표 결과</div>
+
+                {voteResults.vote1RevealedHunters.length > 0 ? (
+                  <div style={styles.revealBanner}>
+                    <div style={{ fontWeight: 900, color: "#111" }}>사냥꾼 색출 성공!</div>
+                    <div style={styles.revealList}>
+                      {voteResults.vote1RevealedHunters.map((pid) => (
+                        <div key={pid} style={styles.revealItem}>
+                          <img
+                            src={hunterImageUrl(pid)}
+                            alt={`${pid}_hunter`}
+                            style={styles.revealImg}
+                          />
+                          <div style={{ fontWeight: 900, color: "#111" }}>{hunterName(pid)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
                 <div style={{ marginTop: 10 }}>
                   <VoteResultTable rows={voteResults.vote1Rows} />
                 </div>
               </section>
             ) : null}
 
+            {/* ✅ 2차 투표 결과 박스 + 색출된 사냥꾼 이미지 표시(이번 라운드 새로 색출된 것) */}
             {showVote2ResultBox ? (
               <section style={styles.card}>
                 <div style={styles.cardTitle}>2차 투표 결과</div>
+
+                {voteResults.vote2RevealedHunters.length > 0 ? (
+                  <div style={styles.revealBanner}>
+                    <div style={{ fontWeight: 900, color: "#111" }}>사냥꾼 색출 성공!</div>
+                    <div style={styles.revealList}>
+                      {voteResults.vote2RevealedHunters.map((pid) => (
+                        <div key={pid} style={styles.revealItem}>
+                          <img
+                            src={hunterImageUrl(pid)}
+                            alt={`${pid}_hunter`}
+                            style={styles.revealImg}
+                          />
+                          <div style={{ fontWeight: 900, color: "#111" }}>{hunterName(pid)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
                 <div style={{ marginTop: 10 }}>
                   <VoteResultTable rows={voteResults.vote2Rows} />
                 </div>
               </section>
             ) : null}
 
-            {/* ✅ 게임 결과 이미지/문구 */}
+            {/* 게임 결과 이미지/문구 */}
             {(isEndedHunters || isEndedAnimals) && (
               <section style={styles.card}>
                 <div style={styles.cardTitle}>게임 결과</div>
@@ -942,7 +992,7 @@ const styles: Record<string, any> = {
     marginTop: 14,
     padding: "12px 12px",
     borderRadius: 12,
-    border: "1px solid rgba(255,255,255,0.18)",
+    border: "1px solid rgba(255,200,60,0.95)",
     background: "rgba(255,200,60,0.95)",
     fontWeight: 900,
     cursor: "pointer",
@@ -1022,5 +1072,37 @@ const styles: Record<string, any> = {
     outline: "none",
     fontWeight: 600,
     color: "#111",
+  },
+
+  // ✅ 색출 배너 스타일
+  revealBanner: {
+    marginTop: 10,
+    border: "1px solid rgba(0,0,0,0.10)",
+    borderRadius: 14,
+    padding: 12,
+    background: "rgba(255,255,255,0.65)",
+  },
+  revealList: {
+    marginTop: 10,
+    display: "flex",
+    gap: 12,
+    flexWrap: "wrap",
+  },
+  revealItem: {
+    display: "flex",
+    flexDirection: "column" as const,
+    alignItems: "center",
+    gap: 8,
+    padding: 10,
+    borderRadius: 12,
+    border: "1px solid rgba(0,0,0,0.08)",
+    background: "rgba(255,255,255,0.75)",
+    minWidth: 120,
+  },
+  revealImg: {
+    width: 96,
+    height: 96,
+    objectFit: "contain" as const,
+    imageRendering: "pixelated" as any,
   },
 };

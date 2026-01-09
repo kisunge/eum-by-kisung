@@ -464,6 +464,11 @@ export default function Player() {
                   <div style={{ marginTop: 6 }}>
                     등산 중, <b>보호할 동물의 손 사진</b>을 찍어서 진행자에게 카톡으로 보내세요. (본인 포함 가능)
                   </div>
+                  <div style={{ marginBottom: 10 }}>
+                    <a href={KAKAO_LINK} target="_blank" rel="noreferrer">
+                      <button>진행자 카카오톡 열기</button>
+                    </a>      
+                  </div>
                 </>
               ) : null}
             </div>

@@ -14,14 +14,13 @@ type VoteSummaryRow = {
 type VoteResultBlock = {
   rows: VoteSummaryRow[];
   outcome: string; // vote1: success_one|success_both|fail, vote2: success|fail
-  revealedHunters: string[]; // ["p2","p3"] 등
+  revealedHunters: string[];
 };
 
 type PublicGame = {
   status: string;
   endedWinner: string;
   vote1RevealedHunterId: string;
-  revealedHunterNames?: string[];
   revealed: {
     killedExists: boolean;
     killedPlayerNames?: string[];
@@ -31,13 +30,12 @@ type PublicGame = {
   };
   players: PublicPlayer[];
 
-  // ✅ 신버전(GAS에서 내려주는 공용 결과)
   voteResults?: {
     vote1?: VoteResultBlock;
     vote2?: VoteResultBlock;
   };
 
-  // ✅ 혹시 기존 프론트에서 쓰던 레거시 필드가 남아있을 수 있어 방어적으로 유지
+  // 레거시(남아있을 수 있어 방어적으로 유지)
   vote1Result?: any;
   vote2Result?: any;
 };
@@ -139,12 +137,10 @@ function isInvalidTokenError(e: any) {
   return m.includes("invalid token") || m.includes("token required") || m.includes("unauthorized");
 }
 
-// ✅ 결과 파서(혹시 레거시 vote1Result / vote2Result 형태가 섞여도 최대한 읽어줌)
 function normalizeVoteBlock(input: any): VoteResultBlock | null {
   try {
     if (!input) return null;
 
-    // 이미 정상 구조
     if (typeof input === "object" && input.rows && Array.isArray(input.rows)) {
       return {
         rows: input.rows || [],
@@ -153,17 +149,14 @@ function normalizeVoteBlock(input: any): VoteResultBlock | null {
       };
     }
 
-    // rows 배열만 넘어오는 케이스
     if (Array.isArray(input)) {
       return { rows: input, outcome: "", revealedHunters: [] };
     }
 
-    // 문자열(JSON)
     if (typeof input === "string") {
       const s = input.trim();
       if (!s) return null;
-      const parsed = JSON.parse(s);
-      return normalizeVoteBlock(parsed);
+      return normalizeVoteBlock(JSON.parse(s));
     }
 
     return null;
@@ -201,10 +194,13 @@ export default function Player() {
 
   const KAKAO_URL = "http://qr.kakao.com/talk/uP76SnGIaCCpwgnfKQu0LTjQsvQ-";
 
-  // ✅ 결과 이미지 (public/ui/)
+  // ✅ 결과 이미지(public/ui/)
   const hunterWinImg = `${import.meta.env.BASE_URL}ui/result_hunter_win.png`;
   const animalWinImg = `${import.meta.env.BASE_URL}ui/result_animal_win.png`;
 
+  // ===========================
+  // ✅ 모든 useMemo는 early return 이전에!
+  // ===========================
   const phaseKey = useMemo(() => String(game?.status ?? "lobby").trim().toLowerCase(), [game?.status]);
   const roleKey = useMemo(() => String(me?.role ?? "").trim().toLowerCase(), [me?.role]);
   const alive = useMemo(() => (me ? isTrue(me.alive) : false), [me]);
@@ -220,6 +216,49 @@ export default function Player() {
     const p = (game.players || []).find((x) => x.playerId === me.playerId);
     return (p?.name || "-").trim() || "-";
   }, [me, game]);
+
+  const candidatesVote1 = useMemo(() => {
+    if (!game || !me) return [];
+    return (game.players || []).filter((p) => isTrue(p.alive) && p.playerId !== me.playerId);
+  }, [game, me]);
+
+  const candidatesVote2 = useMemo(() => {
+    if (!game || !me) return [];
+    const revealed = String(game.vote1RevealedHunterId || "").trim();
+    return (game.players || []).filter((p) => {
+      if (!isTrue(p.alive)) return false;
+      if (p.playerId === me.playerId) return false;
+      if (revealed && p.playerId === revealed) return false;
+      return true;
+    });
+  }, [game, me]);
+
+  const vote1Block = useMemo(() => {
+    const v = game?.voteResults?.vote1;
+    if (v && (v.outcome || (v.rows && v.rows.length))) return v;
+    return normalizeVoteBlock(game?.vote1Result);
+  }, [game]);
+
+  const vote2Block = useMemo(() => {
+    const v = game?.voteResults?.vote2;
+    if (v && (v.outcome || (v.rows && v.rows.length))) return v;
+    return normalizeVoteBlock(game?.vote2Result);
+  }, [game]);
+
+  const showVote1ResultBox = useMemo(() => !!(vote1Block && (vote1Block.outcome || vote1Block.rows.length)), [vote1Block]);
+  const showVote2ResultBox = useMemo(() => !!(vote2Block && (vote2Block.outcome || vote2Block.rows.length)), [vote2Block]);
+
+  const bothHuntersCaughtOnVote2 = useMemo(() => {
+    if (!vote2Block) return false;
+    if (String(vote2Block.outcome || "").toLowerCase() !== "success") return false;
+    const v1 = vote1Block?.revealedHunters || [];
+    const v2 = vote2Block?.revealedHunters || [];
+    const all = Array.from(new Set([...v1, ...v2].filter(Boolean)));
+    return all.length >= 2;
+  }, [vote1Block, vote2Block]);
+
+  const hunterProfileUrl = (pid: string) => `${import.meta.env.BASE_URL}ui/${String(pid).toLowerCase()}_hunter.png`;
+  const playerNameById = (pid: string) => (game?.players || []).find((p) => p.playerId === pid)?.name || pid;
 
   const doLogout = (msg?: string) => {
     localStorage.removeItem("token");
@@ -281,6 +320,7 @@ export default function Player() {
     }
   }
 
+  // polling
   useEffect(() => {
     if (!token) return;
 
@@ -330,22 +370,6 @@ export default function Player() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  const candidatesVote1 = useMemo(() => {
-    if (!game || !me) return [];
-    return (game.players || []).filter((p) => isTrue(p.alive) && p.playerId !== me.playerId);
-  }, [game, me]);
-
-  const candidatesVote2 = useMemo(() => {
-    if (!game || !me) return [];
-    const revealed = String(game.vote1RevealedHunterId || "").trim();
-    return (game.players || []).filter((p) => {
-      if (!isTrue(p.alive)) return false;
-      if (p.playerId === me.playerId) return false;
-      if (revealed && p.playerId === revealed) return false;
-      return true;
-    });
-  }, [game, me]);
-
   async function submitVote(round: 1 | 2) {
     const t = voteTarget.trim();
     const r = voteReason.trim();
@@ -365,7 +389,7 @@ export default function Player() {
   }
 
   // ============================================================
-  // SPLASH
+  // ✅ 이제부터 early return (훅 없음)
   // ============================================================
   if (uiStage === "splash") {
     return (
@@ -391,9 +415,6 @@ export default function Player() {
     );
   }
 
-  // ============================================================
-  // LOGIN POPUP
-  // ============================================================
   if (uiStage === "login") {
     return (
       <div style={styles.fullBlackCenter}>
@@ -454,40 +475,6 @@ export default function Player() {
 
   const isHunterOrKing = roleKey === "hunter" || roleKey === "king";
   const showActionInfo = phaseKey === "hike" && isHunterOrKing;
-
-  // ✅ 투표 결과(신버전 우선, 없으면 레거시에서라도 읽기)
-  const vote1Block = useMemo(() => {
-    const v = game?.voteResults?.vote1;
-    if (v && (v.outcome || (v.rows && v.rows.length))) return v;
-    return normalizeVoteBlock(game?.vote1Result);
-  }, [game?.voteResults?.vote1, game?.vote1Result]);
-
-  const vote2Block = useMemo(() => {
-    const v = game?.voteResults?.vote2;
-    if (v && (v.outcome || (v.rows && v.rows.length))) return v;
-    return normalizeVoteBlock(game?.vote2Result);
-  }, [game?.voteResults?.vote2, game?.vote2Result]);
-
-  // ✅ "완료처리 직후 바로 보이게" = outcome이 생기면 표시
-  const showVote1ResultBox = !!(vote1Block && (vote1Block.outcome || vote1Block.rows.length));
-  const showVote2ResultBox = !!(vote2Block && (vote2Block.outcome || vote2Block.rows.length));
-
-  // ✅ 사냥꾼 프로필 이미지 경로 규칙: public/ui/p2_hunter.png 같은 형태
-  const hunterProfileUrl = (pid: string) => `${import.meta.env.BASE_URL}ui/${String(pid).toLowerCase()}_hunter.png`;
-
-  // ✅ 플레이어ID -> 이름
-  const playerNameById = (pid: string) => (game?.players || []).find((p) => p.playerId === pid)?.name || pid;
-
-  // ✅ (2차에서 둘 다 색출 성공인지) 판단: outcome이 success이고, 1차+2차 revealedHunters 합쳐서 2명 이상이면 true
-  const bothHuntersCaughtOnVote2 = useMemo(() => {
-    if (!vote2Block) return false;
-    if (String(vote2Block.outcome || "").toLowerCase() !== "success") return false;
-
-    const v1 = vote1Block?.revealedHunters || [];
-    const v2 = vote2Block?.revealedHunters || [];
-    const all = Array.from(new Set([...v1, ...v2].filter(Boolean)));
-    return all.length >= 2;
-  }, [vote1Block, vote2Block]);
 
   return (
     <div style={styles.page}>
@@ -559,7 +546,7 @@ export default function Player() {
               </div>
             </section>
 
-            {/* 게임 진행 정보 */}
+            {/* 진행 정보 */}
             <section style={styles.card}>
               <div style={styles.cardTitle}>게임 진행 정보</div>
 
@@ -586,7 +573,7 @@ export default function Player() {
               })()}
             </section>
 
-            {/* ✅ 행동 정보 (hike에서만) */}
+            {/* 행동 정보 */}
             {showActionInfo ? (
               <section style={styles.card}>
                 <div style={styles.cardTitle}>행동 정보</div>
@@ -619,21 +606,17 @@ export default function Player() {
               </section>
             ) : null}
 
-            {/* ============================================================
-                ✅ 투표 결과 박스 (여기가 이전 코드에 "빠져있던" 핵심)
-               ============================================================ */}
+            {/* ✅ 투표 결과 박스 */}
             {showVote1ResultBox || showVote2ResultBox ? (
               <section style={styles.card}>
                 <div style={styles.cardTitle}>투표 결과</div>
 
-                {/* 1차 결과 */}
+                {/* 1차 */}
                 {showVote1ResultBox && vote1Block ? (
                   <div style={{ marginTop: 12 }}>
                     <div style={{ fontWeight: 900, color: "#111", marginBottom: 8 }}>1차 투표 결과</div>
-
                     <VoteResultTable rows={vote1Block.rows} />
 
-                    {/* 1차 성공/실패 메시지 + (요청하신 이미지/사냥꾼 프로필) */}
                     {String(vote1Block.outcome || "").toLowerCase().includes("fail") ? (
                       <div style={{ marginTop: 12 }}>
                         <div style={{ fontWeight: 900, color: "#111" }}>사냥꾼 색출 실패! GAME OVER ..</div>
@@ -662,11 +645,10 @@ export default function Player() {
                   </div>
                 ) : null}
 
-                {/* 2차 결과 */}
+                {/* 2차 */}
                 {showVote2ResultBox && vote2Block ? (
                   <div style={{ marginTop: 18 }}>
                     <div style={{ fontWeight: 900, color: "#111", marginBottom: 8 }}>2차 투표 결과</div>
-
                     <VoteResultTable rows={vote2Block.rows} />
 
                     {String(vote2Block.outcome || "").toLowerCase() === "fail" ? (
@@ -676,7 +658,6 @@ export default function Player() {
                       </div>
                     ) : String(vote2Block.outcome || "").toLowerCase() === "success" ? (
                       <div style={{ marginTop: 12 }}>
-                        {/* ✅ 요청사항: 2차에서 두 명 모두 색출되면 문구 + animal_win 이미지 */}
                         {bothHuntersCaughtOnVote2 ? (
                           <>
                             <div style={{ fontWeight: 900, color: "#111" }}>사냥꾼 색출 성공! 동물들 승리!</div>
@@ -686,7 +667,6 @@ export default function Player() {
                           <div style={{ fontWeight: 900, color: "#111" }}>사냥꾼 색출 성공!</div>
                         )}
 
-                        {/* ✅ 2차 성공이면 (1차+2차) 발각된 사냥꾼들을 보여줌 */}
                         {(() => {
                           const v1 = vote1Block?.revealedHunters || [];
                           const v2 = vote2Block?.revealedHunters || [];
@@ -771,10 +751,6 @@ export default function Player() {
     </div>
   );
 }
-
-/* =========================
-   Vote result UI components
-========================= */
 
 function VoteResultTable({ rows }: { rows: VoteSummaryRow[] }) {
   const safeRows = Array.isArray(rows) ? rows : [];

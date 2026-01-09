@@ -22,10 +22,9 @@ type PublicGame = {
   status: string;
   endedWinner: string;
   vote1RevealedHunterId: string; // legacy
-  revealedHunterNames?: string[]; // host용일 수 있음
+  revealedHunterNames?: string[];
   revealed: {
     killedExists: boolean;
-    // 서버가 killedPlayerNames 또는 killedPlayerIds 둘 중 하나로 내려줄 수 있어서 둘 다 대응
     killedPlayerNames?: string[];
     killedPlayerIds?: string[];
     protectionAttempted: boolean;
@@ -33,7 +32,7 @@ type PublicGame = {
   };
   players: PublicPlayer[];
 
-  // (구버전/프론트에서 이미 쓰고 있던 형태가 있으면 유지)
+  // (구버전 fallback)
   vote1Result?: any;
   vote2Result?: any;
 
@@ -135,11 +134,13 @@ function phaseIndex(phaseKey: string) {
 
 function normalizeRows(input: any): VoteSummaryRow[] {
   if (!input) return [];
-  // 1) voteResults.vote1.rows 형태
   if (Array.isArray(input)) return input;
   if (Array.isArray(input?.rows)) return input.rows;
-  // 2) vote1Result/vote2Result가 rows 없이 바로 내려오는 경우 (방어)
   return [];
+}
+
+function safeStr(v: any) {
+  return String(v ?? "").trim();
 }
 
 export default function Player() {
@@ -208,7 +209,6 @@ export default function Player() {
   // ✅ vote results (신규/구버전 둘 다 대응)
   const voteResults = useMemo(() => {
     const vr = (game as any)?.voteResults as VoteResultsPayload;
-    // fallback: 예전 필드가 있으면 거기서라도
     const v1Fallback = (game as any)?.vote1Result;
     const v2Fallback = (game as any)?.vote2Result;
 
@@ -218,8 +218,8 @@ export default function Player() {
     const vote1Rows = normalizeRows(v1);
     const vote2Rows = normalizeRows(v2);
 
-    const vote1Outcome = String(vr?.vote1?.outcome ?? v1Fallback?.outcome ?? "").trim();
-    const vote2Outcome = String(vr?.vote2?.outcome ?? v2Fallback?.outcome ?? "").trim();
+    const vote1Outcome = safeStr(vr?.vote1?.outcome ?? v1Fallback?.outcome);
+    const vote2Outcome = safeStr(vr?.vote2?.outcome ?? v2Fallback?.outcome);
 
     return { vote1Rows, vote2Rows, vote1Outcome, vote2Outcome };
   }, [game]);
@@ -327,7 +327,7 @@ export default function Player() {
 
   const candidatesVote2 = useMemo(() => {
     if (!game || !me) return [];
-    const revealed = String(game.vote1RevealedHunterId || "").trim();
+    const revealed = safeStr(game.vote1RevealedHunterId || "");
     return (game.players || []).filter((p) => {
       if (!isTrue(p.alive)) return false;
       if (p.playerId === me.playerId) return false;
@@ -439,11 +439,19 @@ export default function Player() {
   const isHunterOrKing = roleKey === "hunter" || roleKey === "king";
   const showActionInfo = phaseKey === "hike" && isHunterOrKing;
 
-  // ✅ 결과 카드 표시 조건
   const isEndedHunters = phaseKey === "endedhunters";
   const isEndedAnimals = phaseKey === "endedanimals";
 
-  const hasVote2Result = (voteResults.vote2Rows || []).length > 0;
+  // ✅ 투표 결과 표 표시 조건
+  // - 1차 결과: hostFinalizeVote1 이후 (vote2Intro/vote2/ended*) 에서 표시
+  const showVote1ResultBox =
+    (voteResults.vote1Rows || []).length > 0 && (phaseKey === "vote2intro" || phaseKey.startsWith("vote2") || phaseKey.startsWith("ended"));
+
+  // - 2차 결과: hostFinalizeVote2 이후 ended*에서 표시
+  const showVote2ResultBox = (voteResults.vote2Rows || []).length > 0 && phaseKey.startsWith("ended");
+
+  // ✅ “두번째 투표결과 두명의 사냥꾼을 모두 색출” 화면용 조건은 endedAnimals + 2차 결과가 존재할 때
+  const showAnimalWinImgFromVote2 = isEndedAnimals && (voteResults.vote2Rows || []).length > 0;
 
   return (
     <div style={styles.page}>
@@ -577,6 +585,25 @@ export default function Player() {
               </section>
             ) : null}
 
+            {/* ✅ 투표 결과 박스(표) - 이게 빠져있어서 1차 이후에 안 뜬 거였음 */}
+            {showVote1ResultBox ? (
+              <section style={styles.card}>
+                <div style={styles.cardTitle}>1차 투표 결과</div>
+                <div style={{ marginTop: 10 }}>
+                  <VoteResultTable rows={voteResults.vote1Rows} />
+                </div>
+              </section>
+            ) : null}
+
+            {showVote2ResultBox ? (
+              <section style={styles.card}>
+                <div style={styles.cardTitle}>2차 투표 결과</div>
+                <div style={{ marginTop: 10 }}>
+                  <VoteResultTable rows={voteResults.vote2Rows} />
+                </div>
+              </section>
+            ) : null}
+
             {/* ✅ 게임 결과 이미지/문구 */}
             {(isEndedHunters || isEndedAnimals) && (
               <section style={styles.card}>
@@ -595,8 +622,7 @@ export default function Player() {
                   </>
                 ) : null}
 
-                {/* ✅ “두번째 투표결과 두명의 사냥꾼을 모두 색출” 조건: endedAnimals && vote2 결과가 존재 */}
-                {isEndedAnimals && hasVote2Result ? (
+                {showAnimalWinImgFromVote2 ? (
                   <>
                     <div style={{ marginTop: 10, fontWeight: 900, color: "#111", fontSize: 16 }}>사냥꾼 색출 성공! 동물들 승리!</div>
                     <div style={{ marginTop: 12 }}>
@@ -611,7 +637,7 @@ export default function Player() {
               </section>
             )}
 
-            {/* 투표 */}
+            {/* 투표 입력 */}
             <section style={styles.card}>
               <div style={styles.cardTitle}>투표</div>
 
@@ -677,6 +703,55 @@ export default function Player() {
     </div>
   );
 }
+
+function VoteResultTable(props: { rows: VoteSummaryRow[] }) {
+  const rows = props.rows || [];
+  if (!rows.length) return <div style={{ color: "#666" }}>표시할 결과가 없어요.</div>;
+
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <thead>
+          <tr>
+            <th style={thStyle}>득표자</th>
+            <th style={thStyle}>득표수</th>
+            <th style={thStyle}>사유</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, idx) => {
+            const name = String(r.targetName || r.targetId || "-");
+            const count = Number(r.count || 0);
+            const reasons = Array.isArray(r.reasons) ? r.reasons.filter(Boolean).join(", ") : "";
+            return (
+              <tr key={`${name}-${idx}`}>
+                <td style={tdStyle}>{name}</td>
+                <td style={tdStyle}>{count}표</td>
+                <td style={tdStyle}>{reasons || "-"}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+const thStyle: React.CSSProperties = {
+  textAlign: "left",
+  padding: "10px 10px",
+  borderBottom: "1px solid rgba(0,0,0,0.12)",
+  fontWeight: 900,
+  color: "#222",
+  background: "rgba(255,255,255,0.6)",
+};
+
+const tdStyle: React.CSSProperties = {
+  padding: "10px 10px",
+  borderBottom: "1px solid rgba(0,0,0,0.08)",
+  color: "#111",
+  verticalAlign: "top",
+};
 
 function Badge(props: { label: string }) {
   return (

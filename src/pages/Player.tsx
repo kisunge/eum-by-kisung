@@ -5,39 +5,45 @@ type PublicPlayer = { playerId: string; name: string; alive: any; roleRevealed: 
 type ProtectionResult = "none" | "success" | "partial";
 
 type VoteSummaryRow = {
-  targetId?: string;
-  targetName?: string;
-  count?: number;
-  reasons?: string[];
+  targetId: string;
+  targetName: string;
+  count: number;
+  reasons: string[];
 };
-
-type VoteResultsPayload =
-  | {
-      vote1?: { rows?: VoteSummaryRow[]; outcome?: string; revealedHunters?: string[] };
-      vote2?: { rows?: VoteSummaryRow[]; outcome?: string; revealedHunters?: string[] };
-    }
-  | undefined;
 
 type PublicGame = {
   status: string;
   endedWinner: string;
-  vote1RevealedHunterId: string; // legacy
+  vote1RevealedHunterId: string;
   revealedHunterNames?: string[];
   revealed: {
     killedExists: boolean;
+    // (구버전 호환) killedPlayerNames가 올 수도 있어서 optional
     killedPlayerNames?: string[];
+    // (신버전) killedPlayerIds가 올 수도 있음
     killedPlayerIds?: string[];
     protectionAttempted: boolean;
     protectionResult: ProtectionResult;
   };
   players: PublicPlayer[];
 
-  // 구버전 fallback
+  // (프론트에서 이미 쓰고 있다면 유지)
   vote1Result?: any;
   vote2Result?: any;
 
-  // 신규: GAS 공용 결과
-  voteResults?: VoteResultsPayload;
+  // (신버전) voteResults가 올 수도 있음
+  voteResults?: {
+    vote1?: {
+      rows: VoteSummaryRow[];
+      outcome: string;
+      revealedHunters: string[];
+    };
+    vote2?: {
+      rows: VoteSummaryRow[];
+      outcome: string;
+      revealedHunters: string[];
+    };
+  };
 };
 
 type Me = {
@@ -132,20 +138,10 @@ function phaseIndex(phaseKey: string) {
   return -1;
 }
 
-function normalizeRows(input: any): VoteSummaryRow[] {
-  if (!input) return [];
-  if (Array.isArray(input)) return input;
-  if (Array.isArray(input?.rows)) return input.rows;
-  return [];
-}
-
-function normalizeIds(input: any): string[] {
-  if (Array.isArray(input)) return input.map((x) => String(x).trim()).filter(Boolean);
-  return [];
-}
-
-function safeStr(v: any) {
-  return String(v ?? "").trim();
+// ✅ 에러 메세지에서 invalid token을 최대한 잘 잡기(환경별 문자열 방어)
+function isInvalidTokenError(e: any) {
+  const m = String(e?.message || e || "").toLowerCase();
+  return m.includes("invalid token") || m.includes("token required") || m.includes("unauthorized");
 }
 
 export default function Player() {
@@ -168,16 +164,17 @@ export default function Player() {
 
   const splashUrl = `${import.meta.env.BASE_URL}ui/splash.png`;
 
-  const START_BTN = { left: "23%", top: "75%", width: "60%", height: "20%" };
+  const START_BTN = {
+    left: "23%",
+    top: "75%",
+    width: "60%",
+    height: "20%",
+  };
 
   const KAKAO_URL = "http://qr.kakao.com/talk/uP76SnGIaCCpwgnfKQu0LTjQsvQ-";
 
-  const RESULT_ANIMAL_WIN = `${import.meta.env.BASE_URL}ui/result_animal_win.png`;
-  const RESULT_HUNTER_WIN = `${import.meta.env.BASE_URL}ui/result_hunter_win.png`;
-
   const phaseKey = useMemo(() => String(game?.status ?? "lobby").trim().toLowerCase(), [game?.status]);
   const roleKey = useMemo(() => String(me?.role ?? "").trim().toLowerCase(), [me?.role]);
-
   const alive = useMemo(() => (me ? isTrue(me.alive) : false), [me]);
 
   const myAvatarUrl = useMemo(() => {
@@ -192,40 +189,16 @@ export default function Player() {
     return (p?.name || "-").trim() || "-";
   }, [me, game]);
 
-  const killedNames = useMemo(() => {
-    if (!game) return [];
-    const names = (game.revealed as any)?.killedPlayerNames;
-    if (Array.isArray(names) && names.length) return names.map((s) => String(s).trim()).filter(Boolean);
-
-    const ids = (game.revealed as any)?.killedPlayerIds;
-    if (Array.isArray(ids) && ids.length) {
-      const byId = new Map((game.players || []).map((p) => [p.playerId, p.name]));
-      return ids.map((id: string) => byId.get(String(id)) || String(id)).filter(Boolean);
-    }
-    return [];
-  }, [game]);
-
-  // ✅ vote results: rows + outcome + revealedHunters(중요!)
-  const voteResults = useMemo(() => {
-    const vr = (game as any)?.voteResults as VoteResultsPayload;
-    const v1Fallback = (game as any)?.vote1Result;
-    const v2Fallback = (game as any)?.vote2Result;
-
-    const v1 = vr?.vote1 ?? v1Fallback;
-    const v2 = vr?.vote2 ?? v2Fallback;
-
-    const vote1Rows = normalizeRows(v1);
-    const vote2Rows = normalizeRows(v2);
-
-    const vote1Outcome = safeStr(vr?.vote1?.outcome ?? v1Fallback?.outcome);
-    const vote2Outcome = safeStr(vr?.vote2?.outcome ?? v2Fallback?.outcome);
-
-    // 🔥 여기 추가: 색출된 사냥꾼 목록
-    const vote1RevealedHunters = normalizeIds(vr?.vote1?.revealedHunters ?? v1Fallback?.revealedHunters);
-    const vote2RevealedHunters = normalizeIds(vr?.vote2?.revealedHunters ?? v2Fallback?.revealedHunters);
-
-    return { vote1Rows, vote2Rows, vote1Outcome, vote2Outcome, vote1RevealedHunters, vote2RevealedHunters };
-  }, [game]);
+  // ✅ 공용 로그아웃(토큰 무효 포함)
+  const doLogout = (msg?: string) => {
+    localStorage.removeItem("token");
+    setToken("");
+    setMe(null);
+    setGame(null);
+    setPassword("");
+    setNetState(msg ? { ok: false, msg } : { ok: true, msg: "" });
+    setUiStage("splash");
+  };
 
   async function login() {
     try {
@@ -243,7 +216,6 @@ export default function Player() {
       setMe(data.me);
       setGame(data.game);
       setPassword("");
-
       setUiStage("game");
     } catch (e: any) {
       console.error(e);
@@ -265,6 +237,13 @@ export default function Player() {
       setNetState({ ok: true, msg: "" });
     } catch (e: any) {
       console.error(e);
+
+      // ✅ 여기서 invalid token이면: 더 이상 polling하지 말고 즉시 로그아웃 유도
+      if (isInvalidTokenError(e)) {
+        doLogout("세션이 만료되었어요. 다시 로그인해 주세요.");
+        return;
+      }
+
       setNetState({
         ok: false,
         msg: "네트워크 연결이 일시 중단되었어요. 화면을 다시 켜거나, 아래 [새로고침]을 눌러 주세요.",
@@ -289,8 +268,11 @@ export default function Player() {
 
     const loop = async () => {
       clear();
-      if (document.visibilityState !== "visible") return;
+      const visible = document.visibilityState === "visible";
+      if (!visible) return;
+
       await refreshOnce();
+      // invalid token이면 refreshOnce에서 doLogout이 실행되어 token이 비워지고, 다음 effect에서 타이머가 정리됨
       timerRef.current = window.setTimeout(loop, 5000);
     };
 
@@ -302,7 +284,10 @@ export default function Player() {
       }
     };
 
-    const onFocus = () => refreshOnce().finally(() => loop());
+    const onFocus = () => {
+      refreshOnce().finally(() => loop());
+    };
+
     const onOnline = () => {
       setNetState({ ok: true, msg: "" });
       refreshOnce().finally(() => loop());
@@ -330,7 +315,7 @@ export default function Player() {
 
   const candidatesVote2 = useMemo(() => {
     if (!game || !me) return [];
-    const revealed = safeStr(game.vote1RevealedHunterId || "");
+    const revealed = String(game.vote1RevealedHunterId || "").trim();
     return (game.players || []).filter((p) => {
       if (!isTrue(p.alive)) return false;
       if (p.playerId === me.playerId) return false;
@@ -357,7 +342,9 @@ export default function Player() {
     await refreshOnce();
   }
 
+  // ============================================================
   // SPLASH
+  // ============================================================
   if (uiStage === "splash") {
     return (
       <div style={styles.fullBlackCenter}>
@@ -382,7 +369,9 @@ export default function Player() {
     );
   }
 
-  // LOGIN
+  // ============================================================
+  // LOGIN POPUP
+  // ============================================================
   if (uiStage === "login") {
     return (
       <div style={styles.fullBlackCenter}>
@@ -432,7 +421,9 @@ export default function Player() {
     );
   }
 
+  // ============================================================
   // GAME UI
+  // ============================================================
   const stepIdx = phaseIndex(phaseKey);
 
   const showVote1 = alive && phaseKey === "vote1";
@@ -441,28 +432,6 @@ export default function Player() {
 
   const isHunterOrKing = roleKey === "hunter" || roleKey === "king";
   const showActionInfo = phaseKey === "hike" && isHunterOrKing;
-
-  const isEndedHunters = phaseKey === "endedhunters";
-  const isEndedAnimals = phaseKey === "endedanimals";
-
-  // ✅ 결과 박스 표시 조건 (1차는 2차 설명/진행/종료부터, 2차는 종료에서)
-  const showVote1ResultBox =
-    (voteResults.vote1Rows || []).length > 0 &&
-    (phaseKey === "vote2intro" || phaseKey.startsWith("vote2") || phaseKey.startsWith("ended"));
-
-  const showVote2ResultBox = (voteResults.vote2Rows || []).length > 0 && phaseKey.startsWith("ended");
-
-  // ✅ endedAnimals + vote2Rows 존재 = (보통) 2차로 최종 색출 성공 연출
-  const showAnimalWinImgFromVote2 = isEndedAnimals && (voteResults.vote2Rows || []).length > 0;
-
-  const byIdName = useMemo(() => {
-    const m = new Map<string, string>();
-    (game?.players || []).forEach((p) => m.set(p.playerId, p.name));
-    return m;
-  }, [game]);
-
-  const hunterImageUrl = (pid: string) => `${import.meta.env.BASE_URL}ui/${pid}_hunter.png`;
-  const hunterName = (pid: string) => byIdName.get(pid) || pid;
 
   return (
     <div style={styles.page}>
@@ -486,7 +455,6 @@ export default function Player() {
           <div style={{ color: "#111", fontWeight: 900 }}>게임 정보를 불러오는 중...</div>
         ) : (
           <>
-            {/* 프로필 */}
             <section style={styles.card}>
               <div style={styles.cardTitle}>프로필</div>
 
@@ -520,7 +488,6 @@ export default function Player() {
               </div>
             </section>
 
-            {/* 게임 단계 */}
             <section style={styles.card}>
               <div style={styles.cardTitle}>게임 단계</div>
 
@@ -534,36 +501,33 @@ export default function Player() {
               </div>
             </section>
 
-            {/* 게임 진행 정보 */}
             <section style={styles.card}>
               <div style={styles.cardTitle}>게임 진행 정보</div>
 
-              <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr", gap: 10 }}>
-                <InfoRow
-                  label="사망자"
-                  value={
-                    phaseKey === "hikeend" || phaseKey.startsWith("vote") || phaseKey.startsWith("ended")
-                      ? killedNames.length
-                        ? "있음"
-                        : "없음"
-                      : game.revealed.killedExists
-                      ? "있음"
-                      : "없음"
-                  }
-                />
-                <InfoRow
-                  label="사망자 목록"
-                  value={phaseKey === "hikeend" || phaseKey.startsWith("vote") || phaseKey.startsWith("ended") ? killedNames.join(", ") || "-" : "-"}
-                />
-                <InfoRow label="보호 시도" value={protectionAttemptText(!!game.revealed.protectionAttempted)} />
-                <InfoRow
-                  label="보호 성공"
-                  value={protectionResultText(!!game.revealed.protectionAttempted, game.revealed.protectionResult || "none")}
-                />
-              </div>
+              {/* ✅ killedPlayerNames/Ids 둘 다 대응 */}
+              {(() => {
+                const killedNames = (game.revealed.killedPlayerNames || []).filter(Boolean);
+                const killedIds = (game.revealed.killedPlayerIds || []).filter(Boolean);
+                const idToName = (id: string) => (game.players || []).find((p) => p.playerId === id)?.name || id;
+                const killedList = killedNames.length ? killedNames : killedIds.map(idToName);
+
+                const showPublic = phaseKey === "hikeend" || phaseKey.startsWith("vote") || phaseKey.startsWith("ended");
+                const killedExists = showPublic ? killedList.length > 0 : !!game.revealed.killedExists;
+
+                return (
+                  <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr", gap: 10 }}>
+                    <InfoRow label="사망자" value={killedExists ? "있음" : "없음"} />
+                    <InfoRow label="사망자 목록" value={showPublic ? (killedList.join(", ") || "-") : "-"} />
+                    <InfoRow label="보호 시도" value={protectionAttemptText(!!game.revealed.protectionAttempted)} />
+                    <InfoRow
+                      label="보호 성공"
+                      value={protectionResultText(!!game.revealed.protectionAttempted, game.revealed.protectionResult || "none")}
+                    />
+                  </div>
+                );
+              })()}
             </section>
 
-            {/* 행동 정보 (hike에서만) */}
             {showActionInfo ? (
               <section style={styles.card}>
                 <div style={styles.cardTitle}>행동 정보</div>
@@ -596,98 +560,6 @@ export default function Player() {
               </section>
             ) : null}
 
-            {/* ✅ 1차 투표 결과 박스 + 색출된 사냥꾼 이미지 표시 */}
-            {showVote1ResultBox ? (
-              <section style={styles.card}>
-                <div style={styles.cardTitle}>1차 투표 결과</div>
-
-                {voteResults.vote1RevealedHunters.length > 0 ? (
-                  <div style={styles.revealBanner}>
-                    <div style={{ fontWeight: 900, color: "#111" }}>사냥꾼 색출 성공!</div>
-                    <div style={styles.revealList}>
-                      {voteResults.vote1RevealedHunters.map((pid) => (
-                        <div key={pid} style={styles.revealItem}>
-                          <img
-                            src={hunterImageUrl(pid)}
-                            alt={`${pid}_hunter`}
-                            style={styles.revealImg}
-                          />
-                          <div style={{ fontWeight: 900, color: "#111" }}>{hunterName(pid)}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-
-                <div style={{ marginTop: 10 }}>
-                  <VoteResultTable rows={voteResults.vote1Rows} />
-                </div>
-              </section>
-            ) : null}
-
-            {/* ✅ 2차 투표 결과 박스 + 색출된 사냥꾼 이미지 표시(이번 라운드 새로 색출된 것) */}
-            {showVote2ResultBox ? (
-              <section style={styles.card}>
-                <div style={styles.cardTitle}>2차 투표 결과</div>
-
-                {voteResults.vote2RevealedHunters.length > 0 ? (
-                  <div style={styles.revealBanner}>
-                    <div style={{ fontWeight: 900, color: "#111" }}>사냥꾼 색출 성공!</div>
-                    <div style={styles.revealList}>
-                      {voteResults.vote2RevealedHunters.map((pid) => (
-                        <div key={pid} style={styles.revealItem}>
-                          <img
-                            src={hunterImageUrl(pid)}
-                            alt={`${pid}_hunter`}
-                            style={styles.revealImg}
-                          />
-                          <div style={{ fontWeight: 900, color: "#111" }}>{hunterName(pid)}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-
-                <div style={{ marginTop: 10 }}>
-                  <VoteResultTable rows={voteResults.vote2Rows} />
-                </div>
-              </section>
-            ) : null}
-
-            {/* 게임 결과 이미지/문구 */}
-            {(isEndedHunters || isEndedAnimals) && (
-              <section style={styles.card}>
-                <div style={styles.cardTitle}>게임 결과</div>
-
-                {isEndedHunters ? (
-                  <>
-                    <div style={{ marginTop: 10, fontWeight: 900, color: "#111", fontSize: 16 }}>사냥꾼 색출 실패! GAME OVER ..</div>
-                    <div style={{ marginTop: 12 }}>
-                      <img
-                        src={RESULT_HUNTER_WIN}
-                        alt="result_hunter_win"
-                        style={{ width: "100%", height: "auto", borderRadius: 14, border: "1px solid rgba(0,0,0,0.10)" }}
-                      />
-                    </div>
-                  </>
-                ) : null}
-
-                {showAnimalWinImgFromVote2 ? (
-                  <>
-                    <div style={{ marginTop: 10, fontWeight: 900, color: "#111", fontSize: 16 }}>사냥꾼 색출 성공! 동물들 승리!</div>
-                    <div style={{ marginTop: 12 }}>
-                      <img
-                        src={RESULT_ANIMAL_WIN}
-                        alt="result_animal_win"
-                        style={{ width: "100%", height: "auto", borderRadius: 14, border: "1px solid rgba(0,0,0,0.10)" }}
-                      />
-                    </div>
-                  </>
-                ) : null}
-              </section>
-            )}
-
-            {/* 투표 입력 */}
             <section style={styles.card}>
               <div style={styles.cardTitle}>투표</div>
 
@@ -727,20 +599,11 @@ export default function Player() {
             </section>
 
             <div style={{ display: "flex", gap: 10, justifyContent: "space-between", alignItems: "center" }}>
-              <button
-                onClick={() => {
-                  localStorage.removeItem("token");
-                  setToken("");
-                  setMe(null);
-                  setGame(null);
-                  setNetState({ ok: true, msg: "" });
-                  setUiStage("splash");
-                }}
-                style={styles.secondaryBtn}
-              >
+              <button onClick={() => doLogout()} style={styles.secondaryBtn}>
                 로그아웃
               </button>
 
+              {/* ✅ 새로고침: refreshOnce() 수동 호출 (실제 동작) */}
               <button onClick={() => refreshOnce().catch(() => {})} style={styles.secondaryBtn}>
                 새로고침
               </button>
@@ -753,55 +616,6 @@ export default function Player() {
     </div>
   );
 }
-
-function VoteResultTable(props: { rows: VoteSummaryRow[] }) {
-  const rows = props.rows || [];
-  if (!rows.length) return <div style={{ color: "#666" }}>표시할 결과가 없어요.</div>;
-
-  return (
-    <div style={{ overflowX: "auto" }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-        <thead>
-          <tr>
-            <th style={thStyle}>득표자</th>
-            <th style={thStyle}>득표수</th>
-            <th style={thStyle}>사유</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r, idx) => {
-            const name = String(r.targetName || r.targetId || "-");
-            const count = Number(r.count || 0);
-            const reasons = Array.isArray(r.reasons) ? r.reasons.filter(Boolean).join(", ") : "";
-            return (
-              <tr key={`${name}-${idx}`}>
-                <td style={tdStyle}>{name}</td>
-                <td style={tdStyle}>{count}표</td>
-                <td style={tdStyle}>{reasons || "-"}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-const thStyle: React.CSSProperties = {
-  textAlign: "left",
-  padding: "10px 10px",
-  borderBottom: "1px solid rgba(0,0,0,0.12)",
-  fontWeight: 900,
-  color: "#222",
-  background: "rgba(255,255,255,0.6)",
-};
-
-const tdStyle: React.CSSProperties = {
-  padding: "10px 10px",
-  borderBottom: "1px solid rgba(0,0,0,0.08)",
-  color: "#111",
-  verticalAlign: "top",
-};
 
 function Badge(props: { label: string }) {
   return (
@@ -992,7 +806,7 @@ const styles: Record<string, any> = {
     marginTop: 14,
     padding: "12px 12px",
     borderRadius: 12,
-    border: "1px solid rgba(255,200,60,0.95)",
+    border: "1px solid rgba(255,255,255,0.18)",
     background: "rgba(255,200,60,0.95)",
     fontWeight: 900,
     cursor: "pointer",
@@ -1072,37 +886,5 @@ const styles: Record<string, any> = {
     outline: "none",
     fontWeight: 600,
     color: "#111",
-  },
-
-  // ✅ 색출 배너 스타일
-  revealBanner: {
-    marginTop: 10,
-    border: "1px solid rgba(0,0,0,0.10)",
-    borderRadius: 14,
-    padding: 12,
-    background: "rgba(255,255,255,0.65)",
-  },
-  revealList: {
-    marginTop: 10,
-    display: "flex",
-    gap: 12,
-    flexWrap: "wrap",
-  },
-  revealItem: {
-    display: "flex",
-    flexDirection: "column" as const,
-    alignItems: "center",
-    gap: 8,
-    padding: 10,
-    borderRadius: 12,
-    border: "1px solid rgba(0,0,0,0.08)",
-    background: "rgba(255,255,255,0.75)",
-    minWidth: 120,
-  },
-  revealImg: {
-    width: 96,
-    height: 96,
-    objectFit: "contain" as const,
-    imageRendering: "pixelated" as any,
   },
 };

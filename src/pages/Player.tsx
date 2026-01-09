@@ -11,13 +11,34 @@ type Revealed = {
   protectionResult: ProtectionResult;
 };
 
+// ✅ 공개용 투표 결과(익명 집계)
+type PublicVoteRow = {
+  targetId: string;
+  targetName: string;
+  count: number;
+  reasons: string[]; // 사유만 모아서
+};
+
+type PublicVoteResult = {
+  rows: PublicVoteRow[];
+  // 이번 라운드에서 색출된 사냥꾼(있으면) - GAS가 결정해서 내려줘야 안전
+  revealedHunterIds?: string[];
+  // (선택) 명시적으로 성공/실패 내려주고 싶으면
+  success?: boolean;
+};
+
 type PublicGame = {
   status: string;
   endedWinner: string;
   vote1RevealedHunterId: string;
   revealedHunterNames?: string[];
+
   revealed?: Partial<Revealed>;
   players: PublicPlayer[];
+
+  // ✅ GAS가 제공하는 공개용 결과(없으면 프론트는 표시 안 함)
+  vote1Public?: PublicVoteResult;
+  vote2Public?: PublicVoteResult;
 };
 
 type Me = {
@@ -151,7 +172,7 @@ export default function Player() {
     return (p?.name || "-").trim() || "-";
   }, [me, game]);
 
-  // ✅ 카카오 링크
+  // ✅ 진행자 카톡 링크
   const KAKAO_LINK = "http://qr.kakao.com/talk/uP76SnGIaCCpwgnfKQu0LTjQsvQ-";
 
   async function login() {
@@ -315,10 +336,8 @@ export default function Player() {
   }
 
   // ============================================================
-  // GAME UI
+  // GAME UI (hikeEnd 이후 크래시 방지용 revealed 기본값)
   // ============================================================
-
-  // ✅ revealed 필드별 방어(하이크 종료 이후 크래시 방지)
   const revealedRaw = game?.revealed ?? {};
   const revealed: Revealed = {
     killedExists: !!revealedRaw.killedExists,
@@ -338,10 +357,18 @@ export default function Player() {
   const showVoteIntro = phase === "vote1Intro" || phase === "vote2Intro";
   const showActionInfo = me?.role === "hunter" || me?.role === "king";
 
+  // ✅ 1차 결과: 호스트 finalize 후 (보통 vote2Intro / vote2 / ended에서 보여지면 됨)
+  const showVote1Result =
+    !!game?.vote1Public &&
+    (phase === "vote2Intro" || phase === "vote2" || phase.startsWith("ended"));
+
+  // ✅ 2차 결과: finalize 후 ended에서 보여짐
+  const showVote2Result = !!game?.vote2Public && phase.startsWith("ended");
+
   return (
     <div style={styles.page}>
       <div style={styles.container}>
-        {/* 1) 프로필 영역 */}
+        {/* 1) 프로필 */}
         <section style={styles.card}>
           <div style={styles.cardTitle}>프로필</div>
 
@@ -404,17 +431,46 @@ export default function Player() {
                 <li>동물의 왕은 사냥꾼의 사냥으로부터 동물친구를 보호(본인포함) 할 수 있습니다.</li>
                 <li>사냥 방법과 보호 방법은 본인만이 알고 있습니다.</li>
                 <li>동물의 왕은 사냥꾼 중 1명이 누구인지 알고 있습니다.</li>
-                <li>
-                  등산이 끝나고 나면 사냥을 당한 동물을 제외 한 모든 동물과 사냥꾼은 두 차례의 투표를 통해 사냥꾼을 한명씩 색출합니다.
-                </li>
-                <li>
-                  만약 동물들이 사냥꾼 2명 모두를 밝혀내면 동물들의 승리. <B>단, 사냥꾼 2명이 모두 들키더라도 마지막에
-                  왕의 정체를 맞추는 경우에는 사냥꾼의 최종 승리로 끝.</B>
-                </li>
+                <li>등산이 끝나고 나면 두 차례의 투표를 통해 사냥꾼을 색출합니다. 사망자는 투표 불가입니다.</li>
+                <li>사냥꾼 2명 모두를 밝혀내면 동물 승리. 단, 마지막에 사냥꾼이 왕 정체를 맞추면 사냥꾼 최종 승리.</li>
               </ol>
             </details>
           </div>
         </section>
+
+        {/* ✅ 1차 투표 결과(호스트 finalize 이후) */}
+        {showVote1Result && game?.vote1Public ? (
+          <section style={styles.card}>
+            <div style={styles.cardTitle}>1차 투표 결과</div>
+            <VoteResultTable result={game.vote1Public} />
+
+            <div style={{ marginTop: 12 }}>
+              <HunterRevealBanner
+                round={1}
+                result={game.vote1Public}
+                threshold={2}
+                baseUrl={import.meta.env.BASE_URL}
+              />
+            </div>
+          </section>
+        ) : null}
+
+        {/* ✅ 2차 투표 결과(호스트 finalize 이후) */}
+        {showVote2Result && game?.vote2Public ? (
+          <section style={styles.card}>
+            <div style={styles.cardTitle}>2차 투표 결과</div>
+            <VoteResultTable result={game.vote2Public} />
+
+            <div style={{ marginTop: 12 }}>
+              <HunterRevealBanner
+                round={2}
+                result={game.vote2Public}
+                threshold={3}
+                baseUrl={import.meta.env.BASE_URL}
+              />
+            </div>
+          </section>
+        ) : null}
 
         {/* 3) 게임 진행 정보 */}
         <section style={styles.card}>
@@ -446,7 +502,7 @@ export default function Player() {
           </div>
         </section>
 
-        {/* 4) 행동 정보 (사냥꾼/왕만 노출) */}
+        {/* 4) 행동 정보 */}
         {showActionInfo && (
           <section style={styles.card}>
             <div style={styles.cardTitle}>행동 정보</div>
@@ -470,17 +526,9 @@ export default function Player() {
                 </>
               ) : null}
 
-              {/* ✅ 추가: 진행자 카톡 이동 버튼 */}
               <div style={{ marginTop: 12 }}>
-                <a
-                  href={KAKAO_LINK}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{ textDecoration: "none" }}
-                >
-                  <button style={{ ...styles.primaryBtn, width: "100%" }}>
-                    진행자의 카톡으로 가기
-                  </button>
+                <a href={KAKAO_LINK} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>
+                  <button style={{ ...styles.primaryBtn, width: "100%" }}>진행자의 카톡으로 가기</button>
                 </a>
               </div>
             </div>
@@ -547,6 +595,118 @@ export default function Player() {
         </div>
 
         <div style={{ height: 20 }} />
+      </div>
+    </div>
+  );
+}
+
+function VoteResultTable(props: { result: PublicVoteResult }) {
+  const rows = (props.result.rows || []).slice().sort((a, b) => (b.count || 0) - (a.count || 0));
+
+  return (
+    <div style={{ marginTop: 10 }}>
+      {rows.length === 0 ? (
+        <div style={{ color: "#666" }}>결과 데이터가 없습니다.</div>
+      ) : (
+        <table style={{ width: "100%", borderCollapse: "collapse", overflow: "hidden", borderRadius: 12 }}>
+          <thead>
+            <tr>
+              <th style={thStyle}>득표자</th>
+              <th style={thStyle}>득표수</th>
+              <th style={thStyle}>사유</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.targetId}>
+                <td style={tdStyle}>{r.targetName || r.targetId}</td>
+                <td style={tdStyle}>{String(r.count ?? 0)}표</td>
+                <td style={tdStyle}>
+                  {(r.reasons || []).filter((x) => String(x || "").trim()).join(", ") || "-"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <div style={{ marginTop: 8, fontSize: 12, color: "#666" }}>
+        ※ 누가 누구를 선택했는지는 공개되지 않습니다.
+      </div>
+    </div>
+  );
+}
+
+function HunterRevealBanner(props: { round: 1 | 2; result: PublicVoteResult; threshold: number; baseUrl: string }) {
+  const revealed = props.result.revealedHunterIds || [];
+  const success = typeof props.result.success === "boolean" ? props.result.success : revealed.length > 0;
+
+  // success=true인데 revealed가 비어있으면(구현 실수 방어) 그냥 성공문구만
+  if (success && revealed.length === 0) {
+    return (
+      <div style={bannerStyle}>
+        <div style={{ fontWeight: 900, fontSize: 16, color: "#111" }}>사냥꾼 색출 성공!</div>
+        <div style={{ marginTop: 6, color: "#444" }}>
+          (사냥꾼 정보가 내려오지 않았어요. GAS에서 revealedHunterIds를 내려주면 이미지/이름까지 표시됩니다.)
+        </div>
+      </div>
+    );
+  }
+
+  if (success && revealed.length > 0) {
+    return (
+      <div style={bannerStyle}>
+        <div style={{ fontWeight: 900, fontSize: 16, color: "#111" }}>사냥꾼 색출 성공!</div>
+        <div style={{ marginTop: 10, display: "flex", gap: 12, flexWrap: "wrap" }}>
+          {revealed.map((pid) => {
+            const hunterImg = `${props.baseUrl}avatars/${pid}_hunter.png`; // p2_hunter.png, p3_hunter.png
+            const name =
+              props.result.rows.find((r) => r.targetId === pid)?.targetName || pid;
+
+            return (
+              <div
+                key={pid}
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  alignItems: "center",
+                  padding: 10,
+                  borderRadius: 14,
+                  background: "rgba(255,255,255,0.75)",
+                  border: "1px solid rgba(0,0,0,0.10)",
+                }}
+              >
+                <div style={{ width: 64, height: 64, borderRadius: 14, overflow: "hidden", border: "1px solid rgba(0,0,0,0.1)" }}>
+                  <img
+                    src={hunterImg}
+                    alt={`${pid} hunter`}
+                    style={{ width: "100%", height: "100%", imageRendering: "pixelated" as any }}
+                    onError={(e) => {
+                      // 혹시 파일이 대문자/경로 문제면 깨지는 걸 방지(표시만)
+                      (e.currentTarget as HTMLImageElement).style.display = "none";
+                    }}
+                  />
+                </div>
+                <div style={{ fontWeight: 900, color: "#111" }}>{name}</div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{ marginTop: 8, fontSize: 12, color: "#666" }}>
+          기준: {props.round}차에서 사냥꾼이 {props.threshold}표 이상이면 색출 성공
+        </div>
+      </div>
+    );
+  }
+
+  // 실패 문구
+  return (
+    <div style={bannerStyle}>
+      <div style={{ fontWeight: 900, fontSize: 16, color: "#111" }}>
+        사냥꾼 색출 실패! GAME OVER ..
+      </div>
+      <div style={{ marginTop: 8, fontSize: 12, color: "#666" }}>
+        기준: {props.round}차에서 사냥꾼이 {props.threshold}표 이상이면 성공
       </div>
     </div>
   );
@@ -679,6 +839,30 @@ function VoteBox(props: {
   );
 }
 
+const thStyle: React.CSSProperties = {
+  textAlign: "left",
+  padding: "10px 12px",
+  background: "rgba(0,0,0,0.04)",
+  borderBottom: "1px solid rgba(0,0,0,0.08)",
+  fontSize: 13,
+  color: "#333",
+};
+
+const tdStyle: React.CSSProperties = {
+  padding: "10px 12px",
+  borderBottom: "1px solid rgba(0,0,0,0.06)",
+  fontSize: 13,
+  color: "#111",
+  verticalAlign: "top",
+};
+
+const bannerStyle: React.CSSProperties = {
+  padding: 12,
+  borderRadius: 14,
+  border: "1px solid rgba(0,0,0,0.10)",
+  background: "rgba(255,220,120,0.35)",
+};
+
 const styles: Record<string, any> = {
   fullBlackCenter: {
     minHeight: "100vh",
@@ -747,7 +931,6 @@ const styles: Record<string, any> = {
     cursor: "pointer",
     color: "#111",
   },
-
   page: {
     minHeight: "100vh",
     background: "linear-gradient(180deg, rgba(255,245,215,1) 0%, rgba(255,255,255,1) 55%, rgba(245,250,255,1) 100%)",

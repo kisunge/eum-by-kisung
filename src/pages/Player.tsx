@@ -4,6 +4,18 @@ import { callApi } from "../api";
 type PublicPlayer = { playerId: string; name: string; alive: any; roleRevealed: any };
 type ProtectionResult = "none" | "success" | "partial";
 
+type VoteSummaryRow = {
+  targetId: string;
+  targetName: string;
+  count: number;
+  reasons: string[];
+};
+
+type VoteResults = {
+  vote1?: { rows: VoteSummaryRow[]; outcome: string; revealedHunters: string[] };
+  vote2?: { rows: VoteSummaryRow[]; outcome: string; revealedHunters: string[] };
+};
+
 type PublicGame = {
   status: string;
   endedWinner: string;
@@ -11,13 +23,17 @@ type PublicGame = {
   revealedHunterNames?: string[];
   revealed: {
     killedExists: boolean;
+    killedPlayerIds?: string[];
     killedPlayerNames: string[];
     protectionAttempted: boolean;
     protectionResult: ProtectionResult;
   };
   players: PublicPlayer[];
 
-  // (프론트에서 이미 쓰고 있다면 유지)
+  // ✅ GAS에서 내려주는 공용 필드
+  voteResults?: VoteResults;
+
+  // ✅ 레거시 호환(있으면 사용 가능)
   vote1Result?: any;
   vote2Result?: any;
 };
@@ -27,7 +43,7 @@ type Me = {
   name: string;
   alive: any;
   roleRevealed: any;
-  role: any; // king/hunter/animal 이외도 혹시 대비
+  role: any;
   knownHunter?: null | { playerId: string; name: string };
   otherHunter?: null | { playerId: string; name: string };
 };
@@ -36,7 +52,6 @@ function isTrue(v: any) {
   return v === true || String(v).toLowerCase() === "true" || String(v) === "1";
 }
 
-// ✅ 비교는 항상 소문자 키로
 function phaseLabelPlayer(phaseKey: string) {
   switch (phaseKey) {
     case "lobby":
@@ -126,27 +141,19 @@ export default function Player() {
   const [game, setGame] = useState<PublicGame | null>(null);
   const [me, setMe] = useState<Me | null>(null);
 
-  // ✅ 네트워크 상태/에러 표시용
   const [netState, setNetState] = useState<{ ok: boolean; msg: string }>({ ok: true, msg: "" });
   const refreshingRef = useRef(false);
   const timerRef = useRef<number | null>(null);
 
-  // vote state
   const [voteTarget, setVoteTarget] = useState("");
   const [voteReason, setVoteReason] = useState("");
 
   const splashUrl = `${import.meta.env.BASE_URL}ui/splash.png`;
 
-  const START_BTN = {
-    left: "23%",
-    top: "75%",
-    width: "60%",
-    height: "20%",
-  };
+  const START_BTN = { left: "23%", top: "75%", width: "60%", height: "20%" };
 
   const KAKAO_URL = "http://qr.kakao.com/talk/uP76SnGIaCCpwgnfKQu0LTjQsvQ-";
 
-  // ✅ 정규화 키
   const phaseKey = useMemo(() => String(game?.status ?? "lobby").trim().toLowerCase(), [game?.status]);
   const roleKey = useMemo(() => String(me?.role ?? "").trim().toLowerCase(), [me?.role]);
 
@@ -164,6 +171,33 @@ export default function Player() {
     return (p?.name || "-").trim() || "-";
   }, [me, game]);
 
+  // ✅ killedPlayerNames 방어: GAS가 names를 못 주는 경우 ids + players로 조립
+  const killedNamesSafe = useMemo(() => {
+    if (!game) return [];
+    const names = (game.revealed?.killedPlayerNames || []).filter(Boolean);
+    if (names.length) return names;
+
+    const ids = (game.revealed?.killedPlayerIds || []).filter(Boolean);
+    if (!ids.length) return [];
+
+    const byId = new Map((game.players || []).map((p) => [p.playerId, p.name]));
+    return ids.map((id) => byId.get(id) || id);
+  }, [game]);
+
+  // ✅ voteResults 방어: 레거시로 내려오는 경우도 흡수
+  const voteResultsSafe: VoteResults = useMemo(() => {
+    const vr = game?.voteResults;
+    if (vr && (vr.vote1 || vr.vote2)) return vr;
+
+    // 레거시 호환
+    const v1 = game?.vote1Result;
+    const v2 = game?.vote2Result;
+    const out: VoteResults = {};
+    if (v1) out.vote1 = v1;
+    if (v2) out.vote2 = v2;
+    return out;
+  }, [game]);
+
   async function login() {
     try {
       setNetState({ ok: true, msg: "" });
@@ -180,7 +214,6 @@ export default function Player() {
       setMe(data.me);
       setGame(data.game);
       setPassword("");
-
       setUiStage("game");
     } catch (e: any) {
       console.error(e);
@@ -192,7 +225,7 @@ export default function Player() {
 
   async function refreshOnce() {
     if (!token) return;
-    if (refreshingRef.current) return; // ✅ 겹침 방지
+    if (refreshingRef.current) return;
     refreshingRef.current = true;
 
     try {
@@ -202,7 +235,6 @@ export default function Player() {
       setNetState({ ok: true, msg: "" });
     } catch (e: any) {
       console.error(e);
-      // ✅ 여기서 ERR_NETWORK_IO_SUSPENDED 같은 케이스가 잡힘
       setNetState({
         ok: false,
         msg: "네트워크 연결이 일시 중단되었어요. 화면을 다시 켜거나, 아래 [새로고침]을 눌러 주세요.",
@@ -212,7 +244,6 @@ export default function Player() {
     }
   }
 
-  // ✅ “페이지가 보일 때만” polling 돌리기
   useEffect(() => {
     if (!token) return;
 
@@ -229,16 +260,13 @@ export default function Player() {
     const loop = async () => {
       clear();
       const visible = document.visibilityState === "visible";
-      if (!visible) return; // ✅ 숨겨지면 멈춤
-
+      if (!visible) return;
       await refreshOnce();
-      // ✅ 너무 빡센 3초 polling이 모바일에서 suspend 유발하는 경우가 많아서 5초로 완화
       timerRef.current = window.setTimeout(loop, 5000);
     };
 
     const onVis = () => {
       if (document.visibilityState === "visible") {
-        // 다시 보이면 즉시 동기화 후 loop 재시작
         refreshOnce().finally(() => loop());
       } else {
         clear();
@@ -258,7 +286,6 @@ export default function Player() {
     window.addEventListener("focus", onFocus);
     window.addEventListener("online", onOnline);
 
-    // 시작
     loop();
 
     return () => {
@@ -396,10 +423,15 @@ export default function Player() {
   const isHunterOrKing = roleKey === "hunter" || roleKey === "king";
   const showActionInfo = phaseKey === "hike" && isHunterOrKing;
 
+  // ✅ 투표 결과는 “수동 완료처리” 후 rows가 생기면 모든 플레이어에게 표시
+  const vote1Rows = (voteResultsSafe.vote1?.rows || []) as VoteSummaryRow[];
+  const vote2Rows = (voteResultsSafe.vote2?.rows || []) as VoteSummaryRow[];
+
+  const showVoteResultsBox = vote1Rows.length > 0 || vote2Rows.length > 0;
+
   return (
     <div style={styles.page}>
       <div style={styles.container}>
-        {/* ✅ 네트워크 경고 배너 */}
         {!netState.ok ? (
           <div
             style={{
@@ -476,7 +508,7 @@ export default function Player() {
                   label="사망자"
                   value={
                     phaseKey === "hikeend" || phaseKey.startsWith("vote") || phaseKey.startsWith("ended")
-                      ? (game.revealed.killedPlayerNames || []).length
+                      ? killedNamesSafe.length
                         ? "있음"
                         : "없음"
                       : game.revealed.killedExists
@@ -488,7 +520,7 @@ export default function Player() {
                   label="사망자 목록"
                   value={
                     phaseKey === "hikeend" || phaseKey.startsWith("vote") || phaseKey.startsWith("ended")
-                      ? (game.revealed.killedPlayerNames || []).join(", ") || "-"
+                      ? killedNamesSafe.join(", ") || "-"
                       : "-"
                   }
                 />
@@ -500,7 +532,7 @@ export default function Player() {
               </div>
             </section>
 
-            {/* ✅ 행동 정보 */}
+            {/* ✅ 행동 정보 (hike에서만) */}
             {showActionInfo ? (
               <section style={styles.card}>
                 <div style={styles.cardTitle}>행동 정보</div>
@@ -524,13 +556,43 @@ export default function Player() {
                     </>
                   ) : null}
 
-                  {/* ✅ 공통 버튼: hunter/king 모두에 무조건 노출 */}
                   <div style={{ marginTop: 12 }}>
                     <a href={KAKAO_URL} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>
                       <button style={styles.primaryBtn}>진행자의 카톡으로 가기</button>
                     </a>
                   </div>
                 </div>
+              </section>
+            ) : null}
+
+            {/* ✅ 투표 결과 (수동 완료처리 후, 모든 플레이어에게 표시) */}
+            {showVoteResultsBox ? (
+              <section style={styles.card}>
+                <div style={styles.cardTitle}>투표 결과</div>
+
+                {/* 1차 */}
+                {vote1Rows.length > 0 ? (
+                  <VoteResultPanel
+                    round={1}
+                    rows={vote1Rows}
+                    outcome={String(voteResultsSafe.vote1?.outcome || "")}
+                    revealedHunterIds={(voteResultsSafe.vote1?.revealedHunters || []).filter(Boolean)}
+                    players={game.players}
+                  />
+                ) : null}
+
+                {/* 2차 */}
+                {vote2Rows.length > 0 ? (
+                  <div style={{ marginTop: 14 }}>
+                    <VoteResultPanel
+                      round={2}
+                      rows={vote2Rows}
+                      outcome={String(voteResultsSafe.vote2?.outcome || "")}
+                      revealedHunterIds={(voteResultsSafe.vote2?.revealedHunters || []).filter(Boolean)}
+                      players={game.players}
+                    />
+                  </div>
+                ) : null}
               </section>
             ) : null}
 
@@ -597,6 +659,86 @@ export default function Player() {
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+function VoteResultPanel(props: {
+  round: 1 | 2;
+  rows: VoteSummaryRow[];
+  outcome: string;
+  revealedHunterIds: string[];
+  players: PublicPlayer[];
+}) {
+  const base = import.meta.env.BASE_URL;
+
+  const byId = useMemo(() => {
+    const m = new Map<string, string>();
+    (props.players || []).forEach((p) => m.set(p.playerId, p.name));
+    return m;
+  }, [props.players]);
+
+  const successText = () => {
+    // 1차: success_one / success_both / fail
+    // 2차: success / fail
+    if (props.round === 1) {
+      if (props.outcome === "success_one" || props.outcome === "success_both") return "사냥꾼 색출 성공!";
+      if (props.outcome === "fail") return "사냥꾼 색출 실패! GAME OVER ..";
+      return "";
+    } else {
+      if (props.outcome === "success") return "사냥꾼 색출 성공!";
+      if (props.outcome === "fail") return "사냥꾼 색출 실패! GAME OVER ..";
+      return "";
+    }
+  };
+
+  const hunterBlocks =
+    props.revealedHunterIds && props.revealedHunterIds.length
+      ? props.revealedHunterIds.map((hid) => ({
+          id: hid,
+          name: byId.get(hid) || hid,
+          img: `${base}avatars/${hid}_hunter.png`, // ✅ p2_hunter.png / p3_hunter.png 형태
+        }))
+      : [];
+
+  return (
+    <div>
+      <div style={{ fontWeight: 900, color: "#111" }}>{props.round}차 득표 결과</div>
+
+      <div style={{ marginTop: 10, border: "1px solid rgba(0,0,0,0.10)", borderRadius: 12, overflow: "hidden" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 90px 1.2fr", background: "rgba(0,0,0,0.04)", padding: 10, fontWeight: 900 }}>
+          <div>득표자</div>
+          <div style={{ textAlign: "center" }}>득표수</div>
+          <div>사유</div>
+        </div>
+
+        {props.rows.map((r) => (
+          <div key={r.targetId} style={{ display: "grid", gridTemplateColumns: "1fr 90px 1.2fr", padding: 10, borderTop: "1px solid rgba(0,0,0,0.08)" }}>
+            <div style={{ fontWeight: 900, color: "#111" }}>{r.targetName}</div>
+            <div style={{ textAlign: "center", fontWeight: 900, color: "#111" }}>{r.count}표</div>
+            <div style={{ color: "#111" }}>{(r.reasons || []).join(", ") || "-"}</div>
+          </div>
+        ))}
+      </div>
+
+      {successText() ? (
+        <div style={{ marginTop: 12, padding: 12, borderRadius: 12, border: "1px solid rgba(0,0,0,0.10)", background: "rgba(255,255,255,0.75)" }}>
+          <div style={{ fontWeight: 900, color: "#111" }}>{successText()}</div>
+
+          {hunterBlocks.length ? (
+            <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+              {hunterBlocks.map((h) => (
+                <div key={h.id} style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                  <div style={{ width: 56, height: 56, borderRadius: 12, overflow: "hidden", border: "1px solid rgba(0,0,0,0.10)", background: "rgba(255,255,255,0.9)" }}>
+                    <img src={h.img} alt={h.id} style={{ width: "100%", height: "100%", imageRendering: "pixelated" as any }} />
+                  </div>
+                  <div style={{ fontWeight: 900, color: "#111" }}>{h.name}</div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -710,13 +852,7 @@ function VoteBox(props: {
           ))}
         </select>
 
-        <textarea
-          placeholder="투표 사유(필수)"
-          value={props.reason}
-          onChange={(e) => props.setReason(e.target.value)}
-          rows={4}
-          style={styles.textarea}
-        />
+        <textarea placeholder="투표 사유(필수)" value={props.reason} onChange={(e) => props.setReason(e.target.value)} rows={4} style={styles.textarea} />
 
         <button onClick={props.onSubmit} disabled={!canSubmit} style={{ ...styles.primaryBtn, opacity: canSubmit ? 1 : 0.55 }}>
           제출
